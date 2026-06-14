@@ -1,7 +1,9 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import productRouter from "./router/product.router.js";
 import categoryRouter from "./router/category.router.js";
+import { cjErrorHandler } from "./middleware/cjErrorHandler.js";
 
 dotenv.config();
 
@@ -20,4 +22,7 @@ app.listen(PORT, () => {
 });
 
 //routes
+app.use("/api/v1/products", productRouter);
 app.use("/api/v1/categories", categoryRouter);
+
+app.use(cjErrorHandler);
