@@ -11,7 +11,7 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/", (req, res) => {
-  res.json("Welcome to Pretypet Backend");
+  res.send("Welcome to Pretypet Backend");
 });
 
 app.listen(PORT, () => {
