@@ -1,5 +1,4 @@
-import { initializeApp, cert } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
+import admin from "firebase-admin";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -20,10 +19,10 @@ const serviceAccount = {
   universe_domain: "googleapis.com",
 };
 
-const app = initializeApp({
-  credential: cert(serviceAccount),
-});
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+}
 
-const auth = getAuth(app);
-
-export default auth;
+export default admin;

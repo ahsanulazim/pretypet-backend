@@ -1,4 +1,4 @@
-import auth from "../admin/firebase.config.js";
+import admin from "../admin/firebase.config.js";
 import { userCollection } from "../collections/collections.js";
 
 export const createUser = async (req, res) => {
@@ -114,8 +114,8 @@ export const updateUserRole = async (req, res) => {
 export const deleteUser = async (req, res) => {
   const email = req.query.email;
   try {
-    const userRecord = await auth.getUserByEmail(email);
-    await auth.deleteUser(userRecord.uid);
+    const userRecord = await admin.auth().getUserByEmail(email);
+    await admin.auth().deleteUser(userRecord.uid);
     const result = await userCollection.deleteOne({ email });
     if (result.deletedCount > 0) {
       return res.send({ success: true, message: "User deleted successfully" });
