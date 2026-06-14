@@ -15,7 +15,7 @@ const router = express.Router();
 router.get("/cj/products", cjRateLimiter, cjGetProducts);
 router.get("/cj/search", cjRateLimiter, cjSearchProducts);
 router.get("/cj/product/:productId", cjRateLimiter, getCjProductDetails);
-router.get("/cj/getAllStoreProducts", cjRateLimiter, getAllStoreProducts);
+router.get("/cj/getAllStoreProducts", getAllStoreProducts);
 router.post("/add", cjRateLimiter, addProductToStore);
 router.delete("/delete/:productId", cjRateLimiter, deleteProduct);
 
