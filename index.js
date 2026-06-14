@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import categoryRouter from "./router/category.router.js";
 
 dotenv.config();
 
@@ -17,3 +18,6 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+
+//routes
+app.use("/api/v1/categories", categoryRouter);
