@@ -1,4 +1,7 @@
-import { storeCollection } from "../collections/collections.js";
+import {
+  productCollection,
+  storeCollection,
+} from "../collections/collections.js";
 import cjApi from "../services/cjApiService.js";
 
 export const cjGetProducts = async (req, res, next) => {
@@ -118,5 +121,15 @@ export const getAllStoreProducts = async (req, res) => {
   } catch (error) {
     console.log(error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+export const getAllProducts = async (req, res) => {
+  try {
+    const products = await productCollection.find().toArray();
+    res.status(200).json(products);
+  } catch (error) {
+    console.error("Error fetching products:", error);
+    res.status(500).json({ message: "Internal server error" });
   }
 };
