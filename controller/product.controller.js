@@ -20,7 +20,10 @@ export const cjGetProducts = async (req, res, next) => {
 //cj product search
 export const cjSearchProducts = async (req, res, next) => {
   try {
-    const { keyWord, page = 1, size = 24 } = req.query;
+    const { keyWord, page = 1 } = req.query;
+
+    const size = 24;
+
     const response = await cjApi.get("/product/listV2", {
       params: {
         keyWord,
@@ -29,8 +32,6 @@ export const cjSearchProducts = async (req, res, next) => {
       },
     });
     if (response.data.code !== 200) throw new Error(response.data.message);
-
-    console.log("CJ Search Response:", response.data);
 
     res.json({ success: true, products: response.data.data });
   } catch (error) {

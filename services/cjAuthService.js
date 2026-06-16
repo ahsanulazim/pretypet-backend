@@ -1,6 +1,5 @@
-import axios from "axios";
 import dotenv from "dotenv";
-import cjApi from "./cjApiService";
+import cjApi from "./cjApiService.js";
 dotenv.config();
 
 let tokenCache = {
@@ -39,12 +38,9 @@ export const getCjAccessToken = async () => {
 // 🔄 Refresh Access Token
 export const refreshAccessToken = async () => {
   if (!tokenCache.refreshToken) throw new Error("No refresh token available");
-  const response = await axios.post(
-    `${process.env.CJ_API_BASE}/authentication/refreshAccessToken`,
-    {
-      refreshToken: tokenCache.refreshToken,
-    },
-  );
+  const response = await cjApi.post("/authentication/refreshAccessToken", {
+    refreshToken: tokenCache.refreshToken,
+  });
 
   if (response.data.code !== 200) {
     throw new Error(response.data.message);
@@ -72,7 +68,7 @@ export const logoutToken = async () => {
   if (!tokenCache.accessToken) return;
 
   await cjApi.post(
-    `/authentication/logout`,
+    "/authentication/logout",
     {},
     {
       headers: { "CJ-Access-Token": tokenCache.accessToken },
