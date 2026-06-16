@@ -9,3 +9,5 @@ export const categoryCollection = client
   .db("pretypet")
   .collection("categories");
 await categoryCollection.createIndex({ slug: 1 }, { unique: true });
+export const locationCollection = client.db("pretypet").collection("locations");
+await locationCollection.createIndex({ slug: 1 }, { unique: true });
