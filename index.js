@@ -6,6 +6,7 @@ import productRouter from "./router/product.router.js";
 import categoryRouter from "./router/category.router.js";
 import locationRouter from "./router/location.router.js";
 import attributeRouter from "./router/attribute.router.js";
+import variantRouter from "./router/variant.router.js";
 import { cjErrorHandler } from "./middleware/cjErrorHandler.js";
 
 dotenv.config();
@@ -35,5 +36,6 @@ app.use("/api/v1/products", productRouter);
 app.use("/api/v1/categories", categoryRouter);
 app.use("/api/v1/locations", locationRouter);
 app.use("/api/v1/attributes", attributeRouter);
+app.use("/api/v1/variants", variantRouter);
 
 app.use(cjErrorHandler);

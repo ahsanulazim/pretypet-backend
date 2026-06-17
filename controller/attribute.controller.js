@@ -1,4 +1,3 @@
-import { ObjectId } from "mongodb";
 import { attributeCollection } from "../collections/collections.js";
 
 export const createAttribute = async (req, res) => {
@@ -60,5 +59,23 @@ export const deleteAttribute = async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Attribute deletion Failed" });
+  }
+};
+
+export const getAttribute = async (req, res) => {
+  const { slug } = req.query;
+
+  try {
+    const attribute = await attributeCollection.findOne({ slug });
+    if (!attribute) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Attribute not found" });
+    }
+    res.status(200).json(attribute);
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, message: "Attribute finding Failed" });
   }
 };

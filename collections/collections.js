@@ -15,3 +15,5 @@ export const attributeCollection = client
   .db("pretypet")
   .collection("attributes");
 await attributeCollection.createIndex({ slug: 1 }, { unique: true });
+export const variantsCollection = client.db("pretypet").collection("variants");
+await variantsCollection.createIndex({ slug: 1 }, { unique: true });
