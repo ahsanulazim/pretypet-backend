@@ -66,6 +66,16 @@ export const getAllVariants = async (req, res) => {
   }
 };
 
+export const getAllAttributesVariants = async (req, res) => {
+  try {
+    const variants = await variantsCollection.find().toArray();
+
+    res.status(200).json(variants);
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Variant finding failed" });
+  }
+};
+
 export const deleteVariant = async (req, res) => {
   const { slug } = req.query;
 

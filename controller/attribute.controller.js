@@ -36,7 +36,7 @@ export const getAllAttributes = async (req, res) => {
   try {
     const attributes = await attributeCollection
       .find()
-      .sort({ createdAt: -1 })
+      .sort({ name: 1 })
       .toArray();
 
     res.status(200).json(attributes);
