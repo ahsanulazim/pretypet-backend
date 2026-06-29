@@ -134,3 +134,34 @@ export const getAllProducts = async (req, res) => {
     res.status(500).json({ message: "Internal server error" });
   }
 };
+
+export const getNewArriavals = async (req, res) => {
+  try {
+    const newArriavals = await storeCollection
+      .find()
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .toArray();
+    res.status(200).json(newArriavals);
+  } catch (error) {
+    console.error("Error fetching new arrivals:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const getProductByPid = async (req, res) => {
+  const { pid } = req.query;
+
+  try {
+    const product = await storeCollection.findOne({ pid });
+    if (!product) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Product not found" });
+    }
+    res.status(200).json({ product, message: "Product Found!" });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};

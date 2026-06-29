@@ -7,6 +7,8 @@ import {
   getAllProducts,
   getAllStoreProducts,
   getCjProductDetails,
+  getNewArriavals,
+  getProductByPid,
 } from "../controller/product.controller.js";
 import { cjRateLimiter } from "../middleware/cjRateLimiter.js";
 
@@ -18,6 +20,8 @@ router.get("/cj/search", cjRateLimiter, cjSearchProducts);
 router.get("/cj/product/:productId", cjRateLimiter, getCjProductDetails);
 router.get("/cj/getAllStoreProducts", getAllStoreProducts);
 router.get("/getAllProducts", getAllProducts);
+router.get("/getNewArrivals", getNewArriavals);
+router.get("/getProductByPid", getProductByPid);
 router.post("/add", cjRateLimiter, addProductToStore);
 router.delete("/delete/:productId", cjRateLimiter, deleteProduct);
 
