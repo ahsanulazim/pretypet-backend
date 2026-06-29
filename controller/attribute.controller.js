@@ -1,9 +1,9 @@
 import { attributeCollection } from "../collections/collections.js";
 
 export const createAttribute = async (req, res) => {
-  const { name, slug, attributeType } = req.body;
+  const { name, slug, variations } = req.body;
 
-  if (!name || !slug || !attributeType) {
+  if (!name || !slug || !variations) {
     return res
       .status(400)
       .json({ success: false, message: "All fields are required" });
@@ -15,7 +15,7 @@ export const createAttribute = async (req, res) => {
   const newAttribute = {
     name,
     slug,
-    attributeType,
+    variations,
     createdAt,
     updatedAt,
   };
