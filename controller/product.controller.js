@@ -125,6 +125,25 @@ export const getAllStoreProducts = async (req, res) => {
   }
 };
 
+export const getListedProducts = async (req, res) => {
+  try {
+    const pageNum = parseInt(req.query.page) || 1;
+    const cjResponse = await cjApi.get("/product/myProduct/query", {
+      params: {
+        pageNum,
+        pageSize: 10,
+        keyword: "",
+      },
+    });
+    if (cjResponse.data.code !== 200) throw new Error(cjResponse.data.message);
+
+    res.json({ success: true, data: cjResponse.data.data });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
 export const getAllProducts = async (req, res) => {
   try {
     const products = await productCollection.find().toArray();

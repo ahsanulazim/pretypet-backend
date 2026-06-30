@@ -7,6 +7,7 @@ import {
   getAllProducts,
   getAllStoreProducts,
   getCjProductDetails,
+  getListedProducts,
   getNewArriavals,
   getProductByPid,
 } from "../controller/product.controller.js";
@@ -22,6 +23,7 @@ router.get("/cj/getAllStoreProducts", getAllStoreProducts);
 router.get("/getAllProducts", getAllProducts);
 router.get("/getNewArrivals", getNewArriavals);
 router.get("/getProductByPid", getProductByPid);
+router.get("/cj/getListedProducts", cjRateLimiter, getListedProducts);
 router.post("/add", cjRateLimiter, addProductToStore);
 router.delete("/delete/:productId", cjRateLimiter, deleteProduct);
 
