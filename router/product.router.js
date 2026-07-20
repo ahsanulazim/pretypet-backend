@@ -1,8 +1,10 @@
 import express from "express";
+import multer from "multer";
 import {
   addProductToStore,
   cjGetProducts,
   cjSearchProducts,
+  createProduct,
   deleteProduct,
   getAllProducts,
   getAllStoreProducts,
@@ -14,6 +16,8 @@ import {
 import { cjRateLimiter } from "../middleware/cjRateLimiter.js";
 
 const router = express.Router();
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 
 //routes
 router.get("/cj/products", cjRateLimiter, cjGetProducts);
@@ -26,5 +30,6 @@ router.get("/getProductByPid", getProductByPid);
 router.get("/cj/getListedProducts", cjRateLimiter, getListedProducts);
 router.post("/add", cjRateLimiter, addProductToStore);
 router.delete("/delete/:productId", cjRateLimiter, deleteProduct);
+router.post("/createProduct", upload.any(), createProduct);
 
 export default router;
