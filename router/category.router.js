@@ -4,10 +4,11 @@ import {
   deleteCategory,
   getAllCategories,
 } from "../controller/category.controller.js";
+import { upload } from "../services/multer.js";
 
 const router = express.Router();
 
-router.post("/create", createCategory);
+router.post("/create", upload.single("thumbnail"), createCategory);
 router.get("/getAllCategories", getAllCategories);
 router.delete("/deleteCategory", deleteCategory);
 
