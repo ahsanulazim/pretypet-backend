@@ -1,3 +1,4 @@
+import { ObjectId } from "mongodb";
 import { attributeCollection } from "../collections/collections.js";
 
 export const createAttribute = async (req, res) => {
@@ -12,10 +13,16 @@ export const createAttribute = async (req, res) => {
   const createdAt = new Date();
   const updatedAt = new Date();
 
+  const options = variations.map((v) => ({
+    value: v.toLowerCase().replace(/\s+/g, "-"),
+    label: v,
+  }));
+
   const newAttribute = {
     name,
     slug,
-    variations,
+    value: slug,
+    options,
     createdAt,
     updatedAt,
   };
@@ -77,5 +84,33 @@ export const getAttribute = async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Attribute finding Failed" });
+  }
+};
+
+export const updateAttribute = async (req, res) => {
+  const { id } = req.query;
+  const { name, slug, variations } = req.body;
+  const updatedAt = new Date();
+  const options = variations.map((v) => ({
+    value: v.toLowerCase().replace(/\s+/g, "-"),
+    label: v,
+  }));
+  try {
+    const result = await attributeCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { name, slug, value: slug, options, updatedAt } },
+    );
+    if (result.matchedCount === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Attribute not found" });
+    }
+    res
+      .status(200)
+      .json({ success: true, message: "Attribute updated successfully" });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, message: "Attribute update failed" });
   }
 };

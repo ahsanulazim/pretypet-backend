@@ -48,8 +48,10 @@ export const cjSearchProducts = async (req, res, next) => {
 //cj product details
 export const getCjProductDetails = async (req, res, next) => {
   try {
-    const { productId } = req.params;
-    const response = await cjApi.get(`/product/query?pid=${productId}`);
+    const { pid } = req.query;
+    const response = await cjApi.get("/product/query", {
+      params: { pid },
+    });
 
     if (response.data.code !== 200) throw new Error(response.data.message);
 
@@ -192,95 +194,137 @@ export const getProductByPid = async (req, res) => {
 // ==========================================
 export const createProduct = async (req, res) => {
   try {
-    const productsCollection = await getProductCollection();
+    const {
+      title,
+      category,
+      brand,
+      noBrand,
+      hasVariations,
+      attributes,
+      vitalInformations,
+      baseStock,
+      basePrice,
+      baseDiscount,
+      variations,
+      thumbnail,
+      images,
+      tags,
+      description,
+      weight,
+      dimensions,
+      freeShipping,
+    } = req.body;
 
-    const { title, price, sku, compareAtPrice, stock } = req.body;
-    const description = req.body.description
-      ? JSON.parse(req.body.description)
-      : {};
-    const attributes = req.body.attributes
-      ? JSON.parse(req.body.attributes)
-      : [];
-    const hasVariations =
-      req.body.hasVariations === "true" || req.body.hasVariations === true;
-    let variations = req.body.variations ? JSON.parse(req.body.variations) : [];
-
-    if (!title || !price) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Title and Price are required." });
+    // 1. Basic Validations
+    if (!title || typeof title !== "string" || title.trim() === "") {
+      return res.status(400).json({ success: false, message: "Title is required" });
+    }
+    if (!category || typeof category !== "string" || category.trim() === "") {
+      return res.status(400).json({ success: false, message: "Category is required" });
+    }
+    if (!noBrand && (!brand || typeof brand !== "string" || brand.trim() === "")) {
+      return res.status(400).json({ success: false, message: "Brand is required unless noBrand is enabled" });
+    }
+    if (thumbnail === undefined || thumbnail === null) {
+      return res.status(400).json({ success: false, message: "Product Thumbnail is required" });
     }
 
-    // SEO Slug Generation...
+    // 2. Generate Unique Slug
     let slug = convertToSlug(title);
-    const slugRegex = new RegExp(`^${slug}(-[0-9]+)?$`, "i");
-    const existingSlugsCount = await productsCollection.countDocuments({
-      slug: slugRegex,
-    });
-    if (existingSlugsCount > 0) slug = `${slug}-${existingSlugsCount}`;
-
-    // --- ১০০% ডায়নামিক ইমেজ হ্যান্ডলিং লজিক ---
-    let baseImagesUrls = [];
-    const files = req.files || []; // upload.any() এর কারণে এটা একটা ফ্ল্যাট অ্যারে
-
-    // ১. মেইন প্রোডাক্টের ইমেজ ফিল্টার ও আপলোড
-    const mainImageFiles = files.filter((file) => file.fieldname === "images");
-    if (mainImageFiles.length > 0) {
-      const uploadPromises = mainImageFiles.map((file) =>
-        uploadToCloudinary(file.buffer),
-      );
-      baseImagesUrls = await Promise.all(uploadPromises);
-    }
-
-    // ২. ডাইনামিক ভেরিয়েশনের ইমেজ ফিল্টার ও আপলোড
-    if (hasVariations && variations.length > 0) {
-      for (let i = 0; i < variations.length; i++) {
-        // ফ্রন্টএন্ড থেকে পাঠানো ইন্ডেক্স অনুযায়ী ফাইল ফিল্টার করা (e.g., variation_images_0, variation_images_1...)
-        const varImageFiles = files.filter(
-          (file) => file.fieldname === `variation_images_${i}`,
-        );
-
-        if (varImageFiles.length > 0) {
-          const varUploadPromises = varImageFiles.map((file) =>
-            uploadToCloudinary(file.buffer),
-          );
-          variations[i].images = await Promise.all(varUploadPromises);
-        } else {
-          variations[i].images = variations[i].images || [];
-        }
+    let isUnique = false;
+    let count = 0;
+    let tempSlug = slug;
+    
+    while (!isUnique) {
+      const existingProduct = await productCollection.findOne({ slug: tempSlug });
+      if (!existingProduct) {
+        isUnique = true;
+        slug = tempSlug;
+      } else {
+        count++;
+        tempSlug = `${slug}-${count}`;
       }
     }
 
-    const newProduct = {
-      title,
+    // 3. Prepare Product Document
+    const productDoc = {
+      title: title.trim(),
       slug,
-      description,
-      sku: sku || null,
-      price: Number(price),
-      compareAtPrice: compareAtPrice ? Number(compareAtPrice) : null,
-      stock: hasVariations ? 0 : Number(stock) || 0,
-      images: baseImagesUrls,
-      attributes,
-      hasVariations,
-      variations: hasVariations
-        ? variations.map((v) => ({
-            sku: v.sku || null,
-            price: Number(v.price),
-            stock: Number(v.stock) || 0,
-            images: v.images,
-            combination: v.combination || [],
-          }))
-        : [],
+      category: category.trim(),
+      brand: noBrand ? null : (brand ? brand.trim() : null),
+      noBrand: !!noBrand,
+      hasVariations: !!hasVariations,
+      vitalInformations: Array.isArray(vitalInformations) ? vitalInformations : null,
+      thumbnail, // Expects { url, public_id } object
+      images: Array.isArray(images) ? images : [], // Expects array of { url, public_id } objects
+      description: typeof description === "string" ? description.trim() : "",
+      weight: weight ? parseFloat(weight) : 0,
+      dimensions: {
+        length: dimensions?.length ? parseFloat(dimensions.length) : 0,
+        width: dimensions?.width ? parseFloat(dimensions.width) : 0,
+        height: dimensions?.height ? parseFloat(dimensions.height) : 0,
+      },
+      freeShipping: !!freeShipping,
+      tags: Array.isArray(tags) ? tags : [],
       createdAt: new Date(),
       updatedAt: new Date(),
     };
 
-    const result = await productsCollection.insertOne(newProduct);
-    return res
-      .status(201)
-      .json({ success: true, data: { _id: result.insertedId, ...newProduct } });
+    // 4. Product Type Specific Handling (Single vs Variable)
+    if (!productDoc.hasVariations) {
+      // Single Product Structure
+      const price = parseFloat(basePrice);
+      if (isNaN(price) || price < 1) {
+        return res.status(400).json({ success: false, message: "Base price is required and must be at least 1 for single products" });
+      }
+
+      productDoc.basePrice = price;
+      productDoc.baseDiscount = baseDiscount ? parseFloat(baseDiscount) : 0;
+      productDoc.baseStock = baseStock ? parseInt(baseStock) : 0;
+      productDoc.attributes = [];
+      productDoc.variations = [];
+    } else {
+      // Variable Product Structure
+      if (!Array.isArray(attributes) || attributes.length === 0) {
+        return res.status(400).json({ success: false, message: "Attributes array is required for variable products" });
+      }
+      if (!Array.isArray(variations) || variations.length === 0) {
+        return res.status(400).json({ success: false, message: "Variations array is required and cannot be empty for variable products" });
+      }
+
+      // Validate each variation
+      for (const variant of variations) {
+        const vPrice = parseFloat(variant.price);
+        if (isNaN(vPrice) || vPrice < 1) {
+          return res.status(400).json({ success: false, message: "Price is required and must be at least 1 for all variations" });
+        }
+        variant.price = vPrice;
+        variant.discount = variant.discount ? parseFloat(variant.discount) : 0;
+        variant.stock = variant.stock ? parseInt(variant.stock) : 0;
+        if (!variant.thumbnail) {
+          return res.status(400).json({ success: false, message: "Thumbnail is required for all variations" });
+        }
+      }
+
+      productDoc.attributes = attributes;
+      productDoc.variations = variations;
+      productDoc.basePrice = null;
+      productDoc.baseDiscount = null;
+      productDoc.baseStock = null;
+    }
+
+    // 5. Insert into MongoDB
+    const result = await productCollection.insertOne(productDoc);
+    
+    return res.status(201).json({
+      success: true,
+      message: "Product created successfully",
+      productId: result.insertedId,
+      slug: productDoc.slug,
+    });
   } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
+    console.error("Error in createProduct:", error);
+    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
   }
 };
 
