@@ -9,6 +9,7 @@ import locationRouter from "./router/location.router.js";
 import attributeRouter from "./router/attribute.router.js";
 import variantRouter from "./router/variant.router.js";
 import cloudinaryRouter from "./router/cloudinary.router.js";
+import carouselRouter from "./router/carousel.router.js";
 import { cjErrorHandler } from "./middleware/cjErrorHandler.js";
 import multer from "multer";
 
@@ -54,5 +55,6 @@ app.use("/api/v1/locations", locationRouter);
 app.use("/api/v1/attributes", attributeRouter);
 app.use("/api/v1/variants", variantRouter);
 app.use("/api/v1/upload", cloudinaryRouter);
+app.use("/api/v1/carousel", carouselRouter);
 
 app.use(cjErrorHandler);
