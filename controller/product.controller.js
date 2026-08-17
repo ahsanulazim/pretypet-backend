@@ -77,10 +77,10 @@ export const addProductToStore = async (req, res, next) => {
     });
     if (cjResponse.data.code !== 200) throw new Error(cjResponse.data.message);
 
-    await storeCollection.insertOne({
-      ...product,
-      createdAt: new Date(),
-    });
+    // await storeCollection.insertOne({
+    //   ...product,
+    //   createdAt: new Date(),
+    // });
 
     res.json({ success: true, product });
   } catch (error) {
@@ -189,6 +189,27 @@ export const getProductByPid = async (req, res) => {
   }
 };
 
+export const getProductBySlug = async (req, res) => {
+  const { slug } = req.query;
+  if (!slug) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Slug parameter is required" });
+  }
+  try {
+    const product = await productCollection.findOne({ slug });
+    if (!product) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Product not found" });
+    }
+    res.status(200).json({ success: true, product });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
 // ==========================================
 // 1. CREATE PRODUCT (Fully Dynamic Image Handling)
 // ==========================================
@@ -217,16 +238,28 @@ export const createProduct = async (req, res) => {
 
     // 1. Basic Validations
     if (!title || typeof title !== "string" || title.trim() === "") {
-      return res.status(400).json({ success: false, message: "Title is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Title is required" });
     }
     if (!category || typeof category !== "string" || category.trim() === "") {
-      return res.status(400).json({ success: false, message: "Category is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Category is required" });
     }
-    if (!noBrand && (!brand || typeof brand !== "string" || brand.trim() === "")) {
-      return res.status(400).json({ success: false, message: "Brand is required unless noBrand is enabled" });
+    if (
+      !noBrand &&
+      (!brand || typeof brand !== "string" || brand.trim() === "")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Brand is required unless noBrand is enabled",
+      });
     }
     if (thumbnail === undefined || thumbnail === null) {
-      return res.status(400).json({ success: false, message: "Product Thumbnail is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Product Thumbnail is required" });
     }
 
     // 2. Generate Unique Slug
@@ -234,9 +267,11 @@ export const createProduct = async (req, res) => {
     let isUnique = false;
     let count = 0;
     let tempSlug = slug;
-    
+
     while (!isUnique) {
-      const existingProduct = await productCollection.findOne({ slug: tempSlug });
+      const existingProduct = await productCollection.findOne({
+        slug: tempSlug,
+      });
       if (!existingProduct) {
         isUnique = true;
         slug = tempSlug;
@@ -251,13 +286,22 @@ export const createProduct = async (req, res) => {
       title: title.trim(),
       slug,
       category: category.trim(),
-      brand: noBrand ? null : (brand ? brand.trim() : null),
+      brand: noBrand ? null : brand ? brand.trim() : null,
       noBrand: !!noBrand,
       hasVariations: !!hasVariations,
-      vitalInformations: Array.isArray(vitalInformations) ? vitalInformations : null,
+      vitalInformations: Array.isArray(vitalInformations)
+        ? vitalInformations
+        : null,
       thumbnail, // Expects { url, public_id } object
       images: Array.isArray(images) ? images : [], // Expects array of { url, public_id } objects
-      description: typeof description === "string" ? description.trim() : "",
+      description:
+        description &&
+        typeof description === "object" &&
+        Array.isArray(description.blocks)
+          ? description
+          : typeof description === "string"
+            ? description.trim()
+            : "",
       weight: weight ? parseFloat(weight) : 0,
       dimensions: {
         length: dimensions?.length ? parseFloat(dimensions.length) : 0,
@@ -275,7 +319,11 @@ export const createProduct = async (req, res) => {
       // Single Product Structure
       const price = parseFloat(basePrice);
       if (isNaN(price) || price < 1) {
-        return res.status(400).json({ success: false, message: "Base price is required and must be at least 1 for single products" });
+        return res.status(400).json({
+          success: false,
+          message:
+            "Base price is required and must be at least 1 for single products",
+        });
       }
 
       productDoc.basePrice = price;
@@ -286,23 +334,37 @@ export const createProduct = async (req, res) => {
     } else {
       // Variable Product Structure
       if (!Array.isArray(attributes) || attributes.length === 0) {
-        return res.status(400).json({ success: false, message: "Attributes array is required for variable products" });
+        return res.status(400).json({
+          success: false,
+          message: "Attributes array is required for variable products",
+        });
       }
       if (!Array.isArray(variations) || variations.length === 0) {
-        return res.status(400).json({ success: false, message: "Variations array is required and cannot be empty for variable products" });
+        return res.status(400).json({
+          success: false,
+          message:
+            "Variations array is required and cannot be empty for variable products",
+        });
       }
 
       // Validate each variation
       for (const variant of variations) {
         const vPrice = parseFloat(variant.price);
         if (isNaN(vPrice) || vPrice < 1) {
-          return res.status(400).json({ success: false, message: "Price is required and must be at least 1 for all variations" });
+          return res.status(400).json({
+            success: false,
+            message:
+              "Price is required and must be at least 1 for all variations",
+          });
         }
         variant.price = vPrice;
         variant.discount = variant.discount ? parseFloat(variant.discount) : 0;
         variant.stock = variant.stock ? parseInt(variant.stock) : 0;
         if (!variant.thumbnail) {
-          return res.status(400).json({ success: false, message: "Thumbnail is required for all variations" });
+          return res.status(400).json({
+            success: false,
+            message: "Thumbnail is required for all variations",
+          });
         }
       }
 
@@ -315,7 +377,7 @@ export const createProduct = async (req, res) => {
 
     // 5. Insert into MongoDB
     const result = await productCollection.insertOne(productDoc);
-    
+
     return res.status(201).json({
       success: true,
       message: "Product created successfully",
@@ -324,7 +386,11 @@ export const createProduct = async (req, res) => {
     });
   } catch (error) {
     console.error("Error in createProduct:", error);
-    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
   }
 };
 
@@ -355,6 +421,34 @@ export const getProducts = async (req, res) => {
     return res.status(200).json({
       success: true,
       data: products,
+      totalPages: Math.ceil(count / limit),
+      currentPage: page,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+//get product by category
+export const getProductsByCategory = async (req, res) => {
+  try {
+    const category = req.query.category;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const [products, count] = await Promise.all([
+      productCollection
+        .find({ category })
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .toArray(),
+      productCollection.countDocuments({ category }),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      products,
       totalPages: Math.ceil(count / limit),
       currentPage: page,
     });

@@ -1,7 +1,7 @@
 import admin from "firebase-admin";
-import dotenv from "dotenv";
+import { config } from "dotenv";
 
-dotenv.config();
+config();
 
 const serviceAccount = {
   type: "service_account",

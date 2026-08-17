@@ -1,6 +1,7 @@
+import "dotenv/config";
 import express from "express";
+import multer from "multer";
 import cors from "cors";
-import dotenv from "dotenv";
 import userRouter from "./router/user.router.js";
 import productRouter from "./router/product.router.js";
 import categoryRouter from "./router/category.router.js";
@@ -11,12 +12,9 @@ import variantRouter from "./router/variant.router.js";
 import cloudinaryRouter from "./router/cloudinary.router.js";
 import carouselRouter from "./router/carousel.router.js";
 import { cjErrorHandler } from "./middleware/cjErrorHandler.js";
-import multer from "multer";
-
-dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT;
 
 app.use(
   cors({

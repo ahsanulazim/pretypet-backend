@@ -43,8 +43,27 @@ export const createCategory = async (req, res) => {
 export const getAllCategories = async (req, res) => {
   try {
     const categories = await categoryCollection
-      .find({})
-      .sort({ createdAt: -1 })
+      .aggregate([
+        {
+          $lookup: {
+            from: "products",
+            localField: "slug",
+            foreignField: "category",
+            as: "products",
+          },
+        },
+        {
+          $addFields: {
+            itemsCount: { $size: "$products" },
+          },
+        },
+        {
+          $project: {
+            products: 0,
+          },
+        },
+        { $sort: { createdAt: -1 } },
+      ])
       .toArray();
 
     res.status(200).json(categories);
@@ -65,10 +84,9 @@ export const deleteCategory = async (req, res) => {
       res.status(404).json({ success: false, message: "Cannot Find Category" });
     }
 
-    if (category.coverThumbnail) {
-      const deleteImage = category.coverThumbnail.split("/").pop().split(".");
+    if (category?.thumbnail?.public_id) {
       try {
-        await cloudinary.uploader.destroy(`category/${deleteImage}`);
+        await cloudinary.uploader.destroy(category.thumbnail.public_id);
       } catch (error) {
         console.error("Cloudinary Error", error);
       }
