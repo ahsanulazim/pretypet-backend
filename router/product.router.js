@@ -33,7 +33,7 @@ router.get("/getProductsByCategory", getProductsByCategory);
 router.get("/getProductBySlug", getProductBySlug);
 router.get("/cj/getListedProducts", cjRateLimiter, getListedProducts);
 router.post("/add", cjRateLimiter, addProductToStore);
-router.delete("/delete/:productId", cjRateLimiter, deleteProduct);
+router.delete("/delete", deleteProduct);
 router.post("/createProduct", createProduct);
 
 export default router;

@@ -68,7 +68,7 @@ export const deleteImage = async (req, res) => {
 export const textEditorSingleImage = async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
+      return res.status(400).json({ success: 0, message: "No file uploaded" });
     }
     const result = await uploadSingleToCloudinary(req.file);
     return res.status(200).json({
@@ -80,7 +80,7 @@ export const textEditorSingleImage = async (req, res) => {
     });
   } catch (error) {
     console.error("Cloudinary upload error:", error);
-    return res.status(500).json({ error: "Failed to upload image" });
+    return res.status(500).json({ success: 0, message: "Failed to upload image" });
   }
 };
 
@@ -89,7 +89,7 @@ export const textEditorSingleImageExternal = async (req, res) => {
   try {
     const { url } = req.body;
     if (!url) {
-      return res.status(400).json({ error: "Url is required" });
+      return res.status(400).json({ success: 0, message: "Url is required" });
     }
     const result = await cloudinary.uploader.upload(url, {
       folder: "products",
@@ -103,6 +103,6 @@ export const textEditorSingleImageExternal = async (req, res) => {
     });
   } catch (error) {
     console.error("Cloudinary upload error:", error);
-    return res.status(500).json({ error: "Failed to upload image" });
+    return res.status(500).json({ success: 0, message: "Failed to upload image" });
   }
 };

@@ -1,10 +1,11 @@
+import { ObjectId } from "mongodb";
 import {
   productCollection,
   storeCollection,
 } from "../collections/collections.js";
 import cjApi from "../services/cjApiService.js";
-import { uploadToCloudinary } from "../utils/cloudinaryHelper.js";
 import { convertToSlug } from "../utils/convertToSlug.js";
+import cloudinary from "../lib/cloudinary.js";
 
 export const cjGetProducts = async (req, res, next) => {
   try {
@@ -88,18 +89,81 @@ export const addProductToStore = async (req, res, next) => {
   }
 };
 
-// ❌ Delete Product from Store
+// ❌ Delete Product from MongoDB & Cloudinary
 export const deleteProduct = async (req, res, next) => {
   try {
-    const { productId } = req.params;
+    const id = req.query.id || req.query.productId || req.params.productId;
+    if (!id || !ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid Product ID is required",
+      });
+    }
 
-    const result = await storeCollection.deleteOne({ productId });
+    const product = await productCollection.findOne({
+      _id: new ObjectId(id),
+    });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
 
-    if (result.deletedCount === 0) throw new Error("Product not found");
+    // 1. Delete main thumbnail from Cloudinary
+    const mainThumbId =
+      product.thumbnail?.publicId || product.thumbnail?.public_id;
+    if (mainThumbId) {
+      try {
+        await cloudinary.uploader.destroy(mainThumbId);
+      } catch (err) {
+        console.error("Failed to delete main thumbnail:", err);
+      }
+    }
 
-    // Sync with CJ "Delete Product"
-    const cjResponse = await cjApi.post("/myCJProduct/delete", { productId });
-    if (cjResponse.data.code !== 200) throw new Error(cjResponse.data.message);
+    // 2. Delete gallery images from Cloudinary
+    if (Array.isArray(product.images)) {
+      for (const img of product.images) {
+        const publicId = img?.publicId || img?.public_id;
+        if (publicId) {
+          try {
+            await cloudinary.uploader.destroy(publicId);
+          } catch (err) {
+            console.error("Failed to delete gallery image:", err);
+          }
+        }
+      }
+    }
+
+    // 3. Delete variation thumbnails & images from Cloudinary
+    if (product.hasVariations && Array.isArray(product.variations)) {
+      for (const variant of product.variations) {
+        const variantThumbId =
+          variant.thumbnail?.publicId || variant.thumbnail?.public_id;
+        if (variantThumbId) {
+          try {
+            await cloudinary.uploader.destroy(variantThumbId);
+          } catch (err) {
+            console.error("Failed to delete variant thumbnail:", err);
+          }
+        }
+        if (Array.isArray(variant.images)) {
+          for (const img of variant.images) {
+            const publicId = img?.publicId || img?.public_id;
+            if (publicId) {
+              try {
+                await cloudinary.uploader.destroy(publicId);
+              } catch (err) {
+                console.error("Failed to delete variant image:", err);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 4. Delete product from MongoDB
+    await productCollection.deleteOne({ _id: new ObjectId(id) });
 
     res.json({ success: true, message: "Product deleted successfully" });
   } catch (error) {
@@ -149,9 +213,80 @@ export const getListedProducts = async (req, res) => {
 };
 
 export const getAllProducts = async (req, res) => {
+  const page = Math.max(parseInt(req.query.page) || 1, 1);
+  const limit = Math.min(parseInt(req.query.limit) || 10, 50); // নিরাপদ cap
+  const searchTerm = req.query.search?.trim() || "";
+
   try {
-    const products = await productCollection.find().toArray();
-    res.status(200).json(products);
+    const matchStage = {};
+    if (searchTerm) {
+      matchStage.title = { $regex: searchTerm, $options: "i" };
+    }
+
+    const pipeline = [
+      { $match: matchStage },
+      { $sort: { createdAt: -1 } },
+      { $skip: (page - 1) * limit },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: "categories",
+          localField: "category",
+          foreignField: "slug",
+          as: "category",
+        },
+      },
+      {
+        $addFields: {
+          category: { $arrayElemAt: ["$category.name", 0] },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          thumbnail: 1,
+          category: 1,
+          hasVariations: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          // variations থেকে price range বের করা
+          price: {
+            $cond: [
+              "$hasVariations",
+              {
+                $concat: [
+                  { $toString: { $min: "$variations.price" } },
+                  "-",
+                  { $toString: { $max: "$variations.price" } },
+                ],
+              },
+              { $toString: "$basePrice" },
+            ],
+          },
+          stock: {
+            $cond: [
+              "$hasVariations",
+              { $sum: "$variations.stock" },
+              "$baseStock",
+            ],
+          },
+        },
+      },
+    ];
+
+    const products = await productCollection.aggregate(pipeline).toArray();
+
+    const totalProducts = await productCollection.countDocuments(matchStage);
+    const totalPages = Math.ceil(totalProducts / limit);
+
+    res.status(200).json({
+      products,
+      totalProducts,
+      totalPages,
+      currentPage: page,
+      limit,
+    });
   } catch (error) {
     console.error("Error fetching products:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -160,7 +295,7 @@ export const getAllProducts = async (req, res) => {
 
 export const getNewArriavals = async (req, res) => {
   try {
-    const newArriavals = await storeCollection
+    const newArriavals = await productCollection
       .find()
       .sort({ createdAt: -1 })
       .limit(6)
@@ -292,6 +427,9 @@ export const createProduct = async (req, res) => {
       vitalInformations: Array.isArray(vitalInformations)
         ? vitalInformations
         : null,
+      baseDiscount: baseDiscount ? parseFloat(baseDiscount) : 0,
+      baseStock: baseStock ? parseInt(baseStock) : 0,
+      basePrice: basePrice ? parseFloat(basePrice) : 0,
       thumbnail, // Expects { url, public_id } object
       images: Array.isArray(images) ? images : [], // Expects array of { url, public_id } objects
       description:
@@ -367,12 +505,8 @@ export const createProduct = async (req, res) => {
           });
         }
       }
-
       productDoc.attributes = attributes;
       productDoc.variations = variations;
-      productDoc.basePrice = null;
-      productDoc.baseDiscount = null;
-      productDoc.baseStock = null;
     }
 
     // 5. Insert into MongoDB
