@@ -58,12 +58,16 @@ export const getAllBrands = async (req, res) => {
 export const deleteBrand = async (req, res) => {
   const { id } = req.query;
   try {
+    if (!id || !ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid brand ID" });
+    }
+
     const brand = await brandCollection.findOne({
       _id: new ObjectId(id),
     });
 
     if (!brand) {
-      res.status(404).json({ success: false, message: "Cannot Find Brand" });
+      return res.status(404).json({ success: false, message: "Cannot Find Brand" });
     }
 
     if (brand.logo) {
@@ -75,8 +79,8 @@ export const deleteBrand = async (req, res) => {
     }
 
     await brandCollection.deleteOne({ _id: new ObjectId(id) });
-    res.status(200).json({ success: true, message: "Brand Deleted" });
+    return res.status(200).json({ success: true, message: "Brand Deleted" });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Failed to delete Brand" });
+    return res.status(500).json({ success: false, message: "Failed to delete Brand" });
   }
 };

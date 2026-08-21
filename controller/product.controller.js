@@ -587,7 +587,7 @@ export const getProductsByCategory = async (req, res) => {
     // Find category data
     const categoryData = await categoryCollection.findOne(
       { slug: category },
-      { projection: { name: 1, slug: 1 } },
+      { projection: { name: 1, slug: 1, description: 1 } },
     );
 
     if (!categoryData) {
@@ -673,6 +673,7 @@ export const getProductsByCategory = async (req, res) => {
       category: {
         name: categoryData.name,
         slug: categoryData.slug,
+        description: categoryData.description,
       },
       pagination: {
         page: currentPage,
