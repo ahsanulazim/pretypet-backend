@@ -1,5 +1,7 @@
 import { ObjectId } from "mongodb";
 import {
+  brandCollection,
+  categoryCollection,
   productCollection,
   storeCollection,
 } from "../collections/collections.js";
@@ -338,7 +340,14 @@ export const getProductBySlug = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Product not found" });
     }
-    res.status(200).json({ success: true, product });
+
+    const productCategory = await categoryCollection.findOne(
+      { slug: product.category },
+      {
+        projection: { _id: 0, name: 1, slug: 1 },
+      },
+    );
+    res.status(200).json({ success: true, product, category: productCategory });
   } catch (error) {
     console.log(error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
@@ -570,21 +579,109 @@ export const getProductsByCategory = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
 
+    const { minPrice, maxPrice, brand, inStock, onSale, sort } = req.query;
+
+    const currentPage = Math.max(Number(page), 1);
+    const perPage = Math.min(Math.max(Number(limit), 1), 50);
+
+    // Find category data
+    const categoryData = await categoryCollection.findOne(
+      { slug: category },
+      { projection: { name: 1, slug: 1 } },
+    );
+
+    if (!categoryData) {
+      return res.status(404).json({
+        success: false,
+        message: "Category not found",
+      });
+    }
+
+    const filter = {
+      category: categoryData.slug,
+      isDeleted: { $ne: true },
+    };
+
+    // Price filter (handles both single products and variable products)
+    if (
+      (minPrice && minPrice.trim() !== "") ||
+      (maxPrice && maxPrice.trim() !== "")
+    ) {
+      const priceFilter = {};
+      if (minPrice && minPrice.trim() !== "")
+        priceFilter.$gte = Number(minPrice);
+      if (maxPrice && maxPrice.trim() !== "")
+        priceFilter.$lte = Number(maxPrice);
+
+      filter.$and = filter.$and || [];
+      filter.$and.push({
+        $or: [{ basePrice: priceFilter }, { "variations.price": priceFilter }],
+      });
+    }
+
+    // Brand filter
+    if (brand && brand.trim() !== "") {
+      filter.brand = brand.trim();
+    }
+
+    // inStock filter - only apply if explicitly true
+    if (inStock === "true" || inStock === true) {
+      filter.$and = filter.$and || [];
+      filter.$and.push({
+        $or: [{ baseStock: { $gt: 0 } }, { "variations.stock": { $gt: 0 } }],
+      });
+    }
+
+    // onSale filter - only apply if explicitly true
+    if (onSale === "true" || onSale === true) {
+      filter.$and = filter.$and || [];
+      filter.$and.push({
+        $or: [
+          { baseDiscount: { $gt: 0 } },
+          { "variations.discount": { $gt: 0 } },
+        ],
+      });
+    }
+
+    const sortOptions = {
+      newest: { createdAt: -1 },
+      oldest: { createdAt: 1 },
+      price_asc: { basePrice: 1 },
+      price_desc: { basePrice: -1 },
+      name_asc: { title: 1 },
+      name_desc: { title: -1 },
+    };
+
+    const sortQuery = sortOptions[sort] || sortOptions.newest;
+    const skip = (currentPage - 1) * perPage;
+
     const [products, count] = await Promise.all([
       productCollection
-        .find({ category })
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
+        .find(filter)
+        .sort(sortQuery)
+        .skip(skip)
+        .limit(perPage)
         .toArray(),
-      productCollection.countDocuments({ category }),
+      productCollection.countDocuments(filter),
     ]);
+
+    const totalPages = Math.ceil(count / perPage);
 
     return res.status(200).json({
       success: true,
       products,
-      totalPages: Math.ceil(count / limit),
-      currentPage: page,
+      category: {
+        name: categoryData.name,
+        slug: categoryData.slug,
+      },
+      pagination: {
+        page: currentPage,
+        limit: perPage,
+        total: count,
+        totalPages,
+        hasNextPage: currentPage < totalPages,
+        hasPrevPage: currentPage > 1,
+      },
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
