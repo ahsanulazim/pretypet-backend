@@ -20,3 +20,7 @@ await variantsCollection.createIndex({ slug: 1 }, { unique: true });
 export const brandCollection = client.db("pretypet").collection("brands");
 await brandCollection.createIndex({ value: 1 }, { unique: true });
 export const carouselCollection = client.db("pretypet").collection("carousel");
+export const orderCollection = client.db("pretypet").collection("orders");
+export const reviewsCollection = client.db("pretypet").collection("reviews");
+export const couponsCollection = client.db("pretypet").collection("coupons");
+

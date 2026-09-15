@@ -250,6 +250,9 @@ export const getAllProducts = async (req, res) => {
           thumbnail: 1,
           category: 1,
           hasVariations: 1,
+          isDropshipped: 1,
+          supplier: 1,
+          cjProductId: 1,
           createdAt: 1,
           updatedAt: 1,
           // variations থেকে price range বের করা
@@ -350,6 +353,37 @@ export const getProductBySlug = async (req, res) => {
     res.status(200).json({ success: true, product, category: productCategory });
   } catch (error) {
     console.log(error);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+export const getProductById = async (req, res) => {
+  const id = req.query.id || req.query.productId || req.params.id;
+  if (!id || !ObjectId.isValid(id)) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Valid Product ID is required" });
+  }
+  try {
+    const product = await productCollection.findOne({ _id: new ObjectId(id) });
+    if (!product) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Product not found" });
+    }
+
+    let productCategory = null;
+    if (product.category) {
+      productCategory = await categoryCollection.findOne(
+        { slug: product.category },
+        {
+          projection: { _id: 0, name: 1, slug: 1 },
+        },
+      );
+    }
+    res.status(200).json({ success: true, product, category: productCategory });
+  } catch (error) {
+    console.error("Error in getProductById:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
@@ -529,6 +563,613 @@ export const createProduct = async (req, res) => {
     });
   } catch (error) {
     console.error("Error in createProduct:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Dedicated API endpoint for new Add Product Stepper Form
+export const createProductStepper = async (req, res) => {
+  try {
+    const {
+      title,
+      category,
+      brand,
+      noBrand,
+      hasVariations,
+      attributes,
+      vitalInformations,
+      baseStock,
+      basePrice,
+      baseDiscount,
+      variations,
+      thumbnail,
+      images,
+      tags,
+      description,
+      weight,
+      dimensions,
+      freeShipping,
+    } = req.body;
+
+    // 1. Basic Validations
+    if (!title || typeof title !== "string" || title.trim() === "") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Title is required" });
+    }
+
+    // Resilient Category Handling (supports string or array)
+    let normalizedCategory = category;
+    if (Array.isArray(category) && category.length > 0) {
+      normalizedCategory = category[0];
+    } else if (typeof category === "object" && category !== null) {
+      normalizedCategory = category.value || category.slug || "";
+    }
+
+    if (
+      !normalizedCategory ||
+      typeof normalizedCategory !== "string" ||
+      normalizedCategory.trim() === ""
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Category is required" });
+    }
+
+    if (
+      !noBrand &&
+      (!brand || typeof brand !== "string" || brand.trim() === "")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Brand is required unless noBrand is enabled",
+      });
+    }
+
+    if (!thumbnail) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Product Thumbnail is required" });
+    }
+
+    // 2. Generate Unique Slug
+    let slug = convertToSlug(title);
+    let isUnique = false;
+    let count = 0;
+    let tempSlug = slug;
+
+    while (!isUnique) {
+      const existingProduct = await productCollection.findOne({
+        slug: tempSlug,
+      });
+      if (!existingProduct) {
+        isUnique = true;
+        slug = tempSlug;
+      } else {
+        count++;
+        tempSlug = `${slug}-${count}`;
+      }
+    }
+
+    // 3. Prepare Product Document
+    const productDoc = {
+      title: title.trim(),
+      slug,
+      category: normalizedCategory.trim(),
+      brand: noBrand ? null : brand ? brand.trim() : null,
+      noBrand: !!noBrand,
+      hasVariations: !!hasVariations,
+      vitalInformations: Array.isArray(vitalInformations)
+        ? vitalInformations.filter(
+            (v) => v && (v.label?.trim() || v.value?.trim())
+          )
+        : null,
+      baseDiscount: baseDiscount ? parseFloat(baseDiscount) : 0,
+      baseStock: baseStock ? parseInt(baseStock) : 0,
+      basePrice: basePrice ? parseFloat(basePrice) : 0,
+      thumbnail, // Expects { url, public_id } object
+      images: Array.isArray(images) ? images : [],
+      description:
+        description &&
+        typeof description === "object" &&
+        Array.isArray(description.blocks)
+          ? description
+          : typeof description === "string"
+            ? description.trim()
+            : "",
+      weight: weight ? parseFloat(weight) : 0,
+      dimensions: {
+        length: dimensions?.length ? parseFloat(dimensions.length) : 0,
+        width: dimensions?.width ? parseFloat(dimensions.width) : 0,
+        height: dimensions?.height ? parseFloat(dimensions.height) : 0,
+      },
+      freeShipping: !!freeShipping,
+      tags: Array.isArray(tags) ? tags : [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    // 4. Product Type Specific Handling (Single vs Variable)
+    if (!productDoc.hasVariations) {
+      const price = parseFloat(basePrice);
+      if (isNaN(price) || price < 1) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Base price is required and must be at least 1 for single products",
+        });
+      }
+
+      productDoc.basePrice = price;
+      productDoc.baseDiscount = baseDiscount ? parseFloat(baseDiscount) : 0;
+      productDoc.baseStock = baseStock ? parseInt(baseStock) : 0;
+      productDoc.attributes = [];
+      productDoc.variations = [];
+    } else {
+      if (!Array.isArray(attributes) || attributes.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Attributes array is required for variable products",
+        });
+      }
+      if (!Array.isArray(variations) || variations.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Variations array is required and cannot be empty for variable products",
+        });
+      }
+
+      // Validate each variation with OPTIONAL variant thumbnail
+      const processedVariations = [];
+      for (const variant of variations) {
+        const vPrice = parseFloat(variant.price);
+        if (isNaN(vPrice) || vPrice < 1) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Price is required and must be at least 1 for all variations",
+          });
+        }
+
+        processedVariations.push({
+          ...variant,
+          price: vPrice,
+          discount: variant.discount ? parseFloat(variant.discount) : 0,
+          stock: variant.stock ? parseInt(variant.stock) : 0,
+          thumbnail: variant.thumbnail || null, // Optional for new stepper
+          images: Array.isArray(variant.images) ? variant.images : [],
+        });
+      }
+
+      productDoc.attributes = attributes;
+      productDoc.variations = processedVariations;
+    }
+
+    // 5. Insert into MongoDB
+    const result = await productCollection.insertOne(productDoc);
+
+    return res.status(201).json({
+      success: true,
+      message: "Product created successfully",
+      productId: result.insertedId,
+      slug: productDoc.slug,
+    });
+  } catch (error) {
+    console.error("Error in createProductStepper:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Dedicated Delete API for Stepper Form with complete image cleanup
+export const deleteProductStepper = async (req, res, next) => {
+  try {
+    const id =
+      req.query.id ||
+      req.query.productId ||
+      req.params.productId ||
+      req.params.id ||
+      req.body?.id ||
+      req.body?.productId;
+
+    if (!id || !ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid Product ID is required",
+      });
+    }
+
+    const product = await productCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    // Helper to safely extract Cloudinary public_id from object or URL string
+    const extractPublicId = (img) => {
+      if (!img) return null;
+      if (typeof img === "object") {
+        if (img.public_id) return img.public_id;
+        if (img.publicId) return img.publicId;
+        if (img.url) return extractPublicId(img.url);
+        return null;
+      }
+      if (typeof img === "string" && img.includes("cloudinary.com")) {
+        try {
+          const parts = img.split("/upload/");
+          if (parts.length > 1) {
+            const afterUpload = parts[1].replace(/^v\d+\//, "");
+            const dotIndex = afterUpload.lastIndexOf(".");
+            return dotIndex !== -1
+              ? afterUpload.substring(0, dotIndex)
+              : afterUpload;
+          }
+        } catch (e) {
+          return null;
+        }
+      }
+      return null;
+    };
+
+    // Use Set to deduplicate public IDs (e.g. if main thumbnail is shared across variants)
+    const publicIdsToDelete = new Set();
+
+    // 1. Main Thumbnail
+    const mainThumbId = extractPublicId(product.thumbnail);
+    if (mainThumbId) publicIdsToDelete.add(mainThumbId);
+
+    // 2. Main Gallery Images
+    if (Array.isArray(product.images)) {
+      product.images.forEach((img) => {
+        const pId = extractPublicId(img);
+        if (pId) publicIdsToDelete.add(pId);
+      });
+    }
+
+    // 3. Variations (Both Variant Thumbnails and Variant Gallery Photos)
+    if (product.hasVariations && Array.isArray(product.variations)) {
+      product.variations.forEach((variant) => {
+        const vThumbId = extractPublicId(variant.thumbnail);
+        if (vThumbId) publicIdsToDelete.add(vThumbId);
+
+        if (Array.isArray(variant.images)) {
+          variant.images.forEach((vImg) => {
+            const vpId = extractPublicId(vImg);
+            if (vpId) publicIdsToDelete.add(vpId);
+          });
+        }
+      });
+    }
+
+    // 4. Description Content (Editor.js inline images)
+    if (
+      product.description &&
+      typeof product.description === "object" &&
+      Array.isArray(product.description.blocks)
+    ) {
+      product.description.blocks.forEach((block) => {
+        if (block?.type === "image" && block.data?.file) {
+          const descImgId = extractPublicId(block.data.file);
+          if (descImgId) publicIdsToDelete.add(descImgId);
+        }
+      });
+    }
+
+    // 5. Delete all collected Cloudinary assets in parallel
+    const deletePromises = Array.from(publicIdsToDelete).map(async (pId) => {
+      try {
+        await cloudinary.uploader.destroy(pId);
+      } catch (err) {
+        console.error(`Failed to delete Cloudinary image [${pId}]:`, err);
+      }
+    });
+
+    await Promise.allSettled(deletePromises);
+
+    // 6. Delete product document from MongoDB
+    await productCollection.deleteOne({ _id: new ObjectId(id) });
+
+    return res.status(200).json({
+      success: true,
+      message: "Product and all associated images deleted successfully",
+      deletedImagesCount: publicIdsToDelete.size,
+    });
+  } catch (error) {
+    console.error("Error in deleteProductStepper:", error);
+    next(error);
+  }
+};
+
+// Dedicated Update API for Stepper Form with smart Cloudinary diff cleanup
+export const updateProductStepper = async (req, res) => {
+  try {
+    const id =
+      req.query.id ||
+      req.query.productId ||
+      req.params.id ||
+      req.params.productId ||
+      req.body?.id ||
+      req.body?.productId ||
+      req.body?._id;
+
+    if (!id || !ObjectId.isValid(id)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Valid Product ID is required" });
+    }
+
+    const existingProduct = await productCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!existingProduct) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Product not found" });
+    }
+
+    const {
+      title,
+      category,
+      brand,
+      noBrand,
+      hasVariations,
+      attributes,
+      vitalInformations,
+      baseStock,
+      basePrice,
+      baseDiscount,
+      variations,
+      thumbnail,
+      images,
+      tags,
+      description,
+      weight,
+      dimensions,
+      freeShipping,
+    } = req.body;
+
+    // 1. Basic Validations
+    if (!title || typeof title !== "string" || title.trim() === "") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Title is required" });
+    }
+
+    // Resilient Category Handling
+    let normalizedCategory = category;
+    if (Array.isArray(category) && category.length > 0) {
+      normalizedCategory = category[0];
+    } else if (typeof category === "object" && category !== null) {
+      normalizedCategory = category.value || category.slug || "";
+    }
+
+    if (
+      !normalizedCategory ||
+      typeof normalizedCategory !== "string" ||
+      normalizedCategory.trim() === ""
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Category is required" });
+    }
+
+    if (
+      !noBrand &&
+      (!brand || typeof brand !== "string" || brand.trim() === "")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Brand is required unless noBrand is enabled",
+      });
+    }
+
+    if (!thumbnail) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Product Thumbnail is required" });
+    }
+
+    // 2. Prepare Updated Document
+    const updateDoc = {
+      title: title.trim(),
+      category: normalizedCategory.trim(),
+      brand: noBrand ? null : brand ? brand.trim() : null,
+      noBrand: !!noBrand,
+      hasVariations: !!hasVariations,
+      vitalInformations: Array.isArray(vitalInformations)
+        ? vitalInformations.filter(
+            (v) => v && (v.label?.trim() || v.value?.trim())
+          )
+        : null,
+      baseDiscount: baseDiscount ? parseFloat(baseDiscount) : 0,
+      baseStock: baseStock ? parseInt(baseStock) : 0,
+      basePrice: basePrice ? parseFloat(basePrice) : 0,
+      thumbnail,
+      images: Array.isArray(images) ? images : [],
+      description:
+        description &&
+        typeof description === "object" &&
+        Array.isArray(description.blocks)
+          ? description
+          : typeof description === "string"
+            ? description.trim()
+            : "",
+      weight: weight ? parseFloat(weight) : 0,
+      dimensions: {
+        length: dimensions?.length ? parseFloat(dimensions.length) : 0,
+        width: dimensions?.width ? parseFloat(dimensions.width) : 0,
+        height: dimensions?.height ? parseFloat(dimensions.height) : 0,
+      },
+      freeShipping: !!freeShipping,
+      tags: Array.isArray(tags) ? tags : [],
+      updatedAt: new Date(),
+    };
+
+    // 3. Product Type Specific Handling (Single vs Variable)
+    if (!updateDoc.hasVariations) {
+      const price = parseFloat(basePrice);
+      if (isNaN(price) || price < 1) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Base price is required and must be at least 1 for single products",
+        });
+      }
+
+      updateDoc.basePrice = price;
+      updateDoc.baseDiscount = baseDiscount ? parseFloat(baseDiscount) : 0;
+      updateDoc.baseStock = baseStock ? parseInt(baseStock) : 0;
+      updateDoc.attributes = [];
+      updateDoc.variations = [];
+    } else {
+      if (!Array.isArray(attributes) || attributes.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Attributes array is required for variable products",
+        });
+      }
+      if (!Array.isArray(variations) || variations.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Variations array is required and cannot be empty for variable products",
+        });
+      }
+
+      const processedVariations = [];
+      for (const variant of variations) {
+        const vPrice = parseFloat(variant.price);
+        if (isNaN(vPrice) || vPrice < 1) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Price is required and must be at least 1 for all variations",
+          });
+        }
+
+        processedVariations.push({
+          ...variant,
+          price: vPrice,
+          discount: variant.discount ? parseFloat(variant.discount) : 0,
+          stock: variant.stock ? parseInt(variant.stock) : 0,
+          thumbnail: variant.thumbnail || null,
+          images: Array.isArray(variant.images) ? variant.images : [],
+        });
+      }
+
+      updateDoc.attributes = attributes;
+      updateDoc.variations = processedVariations;
+    }
+
+    // 4. Cloudinary Image Cleanup for Removed / Replaced Images
+    const extractPublicId = (img) => {
+      if (!img) return null;
+      if (typeof img === "object") {
+        if (img.public_id) return img.public_id;
+        if (img.publicId) return img.publicId;
+        if (img.url) return extractPublicId(img.url);
+        return null;
+      }
+      if (typeof img === "string" && img.includes("cloudinary.com")) {
+        try {
+          const parts = img.split("/upload/");
+          if (parts.length > 1) {
+            const afterUpload = parts[1].replace(/^v\d+\//, "");
+            const dotIndex = afterUpload.lastIndexOf(".");
+            return dotIndex !== -1
+              ? afterUpload.substring(0, dotIndex)
+              : afterUpload;
+          }
+        } catch (e) {
+          return null;
+        }
+      }
+      return null;
+    };
+
+    const collectPublicIds = (doc) => {
+      const set = new Set();
+      if (!doc) return set;
+      const thumb = extractPublicId(doc.thumbnail);
+      if (thumb) set.add(thumb);
+      if (Array.isArray(doc.images)) {
+        doc.images.forEach((img) => {
+          const id = extractPublicId(img);
+          if (id) set.add(id);
+        });
+      }
+      if (Array.isArray(doc.variations)) {
+        doc.variations.forEach((v) => {
+          const vThumb = extractPublicId(v.thumbnail);
+          if (vThumb) set.add(vThumb);
+          if (Array.isArray(v.images)) {
+            v.images.forEach((vImg) => {
+              const id = extractPublicId(vImg);
+              if (id) set.add(id);
+            });
+          }
+        });
+      }
+      if (doc.description && Array.isArray(doc.description.blocks)) {
+        doc.description.blocks.forEach((block) => {
+          if (block?.type === "image" && block.data?.file) {
+            const id = extractPublicId(block.data.file);
+            if (id) set.add(id);
+          }
+        });
+      }
+      return set;
+    };
+
+    const oldPublicIds = collectPublicIds(existingProduct);
+    const newPublicIds = collectPublicIds(updateDoc);
+
+    const removedPublicIds = Array.from(oldPublicIds).filter(
+      (pId) => !newPublicIds.has(pId)
+    );
+
+    if (removedPublicIds.length > 0) {
+      const destroyPromises = removedPublicIds.map(async (pId) => {
+        try {
+          await cloudinary.uploader.destroy(pId);
+        } catch (err) {
+          console.warn(
+            `Failed to destroy removed Cloudinary image [${pId}]:`,
+            err
+          );
+        }
+      });
+      await Promise.allSettled(destroyPromises);
+    }
+
+    // 5. Update MongoDB document
+    await productCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateDoc }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Product updated successfully",
+      slug: existingProduct.slug,
+      cleanedImagesCount: removedPublicIds.length,
+    });
+  } catch (error) {
+    console.error("Error in updateProductStepper:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",

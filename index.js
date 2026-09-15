@@ -11,6 +11,10 @@ import attributeRouter from "./router/attribute.router.js";
 import variantRouter from "./router/variant.router.js";
 import cloudinaryRouter from "./router/cloudinary.router.js";
 import carouselRouter from "./router/carousel.router.js";
+import cjDropshipRouter from "./router/cjDropship.router.js";
+import orderRouter from "./router/order.router.js";
+import reviewRouter from "./router/review.router.js";
+import couponRouter from "./router/coupon.router.js";
 import { cjErrorHandler } from "./middleware/cjErrorHandler.js";
 
 const app = express();
@@ -18,7 +22,11 @@ const PORT = process.env.PORT;
 
 app.use(
   cors({
-    origin: ["http://localhost:3000", "https://pretypet.com"],
+    origin: [
+      "http://localhost:3000",
+      "https://pretypet.com",
+      "https://www.pretypet.com",
+    ],
     credentials: true,
   }),
 );
@@ -54,5 +62,10 @@ app.use("/api/v1/attributes", attributeRouter);
 app.use("/api/v1/variants", variantRouter);
 app.use("/api/v1/upload", cloudinaryRouter);
 app.use("/api/v1/carousel", carouselRouter);
+app.use("/api/v1/cj-dropship", cjDropshipRouter);
+app.use("/api/v1/orders", orderRouter);
+app.use("/api/v1/reviews", reviewRouter);
+app.use("/api/v1/coupons", couponRouter);
 
 app.use(cjErrorHandler);
+
