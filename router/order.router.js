@@ -9,7 +9,11 @@ import {
   deleteOrder,
   getMyOrders,
   cancelMyOrder,
+  fulfillCjOrder,
+  bulkFulfillCjOrders,
+  syncCjOrderStatus,
 } from "../controller/order.controller.js";
+import { cjRateLimiter } from "../middleware/cjRateLimiter.js";
 
 const router = express.Router();
 
@@ -20,6 +24,11 @@ router.get("/getOrderDetails", getOrderDetails);
 router.patch("/updateOrderStatus", updateOrderStatus);
 router.get("/getOrderStats", getOrderStats);
 router.delete("/deleteOrder", deleteOrder);
+
+// CJ Dropshipping fulfillment & tracking sync
+router.post("/bulk-fulfill-cj", cjRateLimiter, bulkFulfillCjOrders);
+router.post("/:id/fulfill-cj", cjRateLimiter, fulfillCjOrder);
+router.post("/:id/sync-cj-status", cjRateLimiter, syncCjOrderStatus);
 
 // Customer endpoints
 router.get("/my-orders", getMyOrders);

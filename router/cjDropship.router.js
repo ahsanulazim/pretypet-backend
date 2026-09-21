@@ -6,6 +6,8 @@ import {
   syncCjProduct,
   updateStoreProduct,
   calculateCjShipping,
+  syncAllCjProducts,
+  getSyncStatus,
 } from "../controller/cjDropship.controller.js";
 import { cjRateLimiter } from "../middleware/cjRateLimiter.js";
 
@@ -23,10 +25,16 @@ router.post("/import", importProductToStore);
 // 4. Update existing product in MongoDB from unified customizer
 router.put("/update/:id", updateStoreProduct);
 
-// 5. Sync product inventory & cost price from CJ
+// 5. Sync individual product inventory & cost price from CJ
 router.post("/sync/:id", cjRateLimiter, syncCjProduct);
 
-// 6. Calculate dynamic shipping options from CJ Dropshipping
+// 6. On-demand full inventory and price sync across all dropshipped products
+router.post("/sync-all", syncAllCjProducts);
+
+// 7. Get sync health status
+router.get("/sync-status", getSyncStatus);
+
+// 8. Calculate dynamic shipping options from CJ Dropshipping
 router.post("/calculate-shipping", calculateCjShipping);
 
 export default router;

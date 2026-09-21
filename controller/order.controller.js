@@ -1,8 +1,11 @@
 import { ObjectId } from "mongodb";
-import { orderCollection } from "../collections/collections.js";
+import { orderCollection, productCollection } from "../collections/collections.js";
+import cjApi from "../services/cjApiService.js";
 import {
   createStripeCheckoutSession,
   verifyStripePayment,
+  createStripePaymentIntent,
+  verifyStripePaymentIntent,
 } from "../services/stripeService.js";
 
 /**
@@ -29,8 +32,10 @@ export const normalizeOrder = (doc) => {
     productId: item.productId || item._id || "",
     title: item.title || item.productName || item.name || "Product",
     thumbnail: item.thumbnail || item.image || "",
-    sku: item.sku || "",
-    vid: item.vid || "",
+    sku: item.sku || item.cjSku || "",
+    vid: item.vid || item.cjVid || "",
+    cjVid: item.cjVid || item.vid || "",
+    isDropshipped: Boolean(item.isDropshipped || item.cjVid || item.vid),
     quantity: Number(item.quantity) || 1,
     price: Number(item.price) || 0,
     finalPrice: Number(item.finalPrice || item.price || 0),
@@ -59,7 +64,8 @@ export const normalizeOrder = (doc) => {
     shippingCost,
     total,
     currency: doc.currency || "USD",
-    paymentMethod: "stripe",
+    paymentMethod: doc.paymentMethod || "stripe",
+    paymentDetails: doc.paymentDetails || null,
     paymentStatus,
     orderStatus,
     status: orderStatus, // backward compatibility
@@ -159,15 +165,35 @@ export const createOrder = async (req, res, next) => {
     const insertResult = await orderCollection.insertOne(orderDoc);
     orderDoc._id = insertResult.insertedId;
 
-    // Initialize Stripe Session
-    const session = await createStripeCheckoutSession({
+    // 1. Initialize Stripe PaymentIntent for custom on-site checkout
+    const paymentIntent = await createStripePaymentIntent({
       order: orderDoc,
-      clientUrl: clientUrl || req.headers.origin,
     });
+
+    // 2. Also initialize Stripe Checkout Session as fallback
+    let session = null;
+    try {
+      session = await createStripeCheckoutSession({
+        order: orderDoc,
+        clientUrl: clientUrl || req.headers.origin,
+      });
+    } catch (sessionErr) {
+      console.warn(
+        "⚠️ [Stripe] Checkout Session fallback initialization skipped:",
+        sessionErr?.message,
+      );
+    }
 
     await orderCollection.updateOne(
       { _id: orderDoc._id },
-      { $set: { stripeSessionId: session.id, paymentUrl: session.url } },
+      {
+        $set: {
+          stripePaymentIntentId: paymentIntent?.id || null,
+          clientSecret: paymentIntent?.clientSecret || null,
+          stripeSessionId: session?.id || null,
+          paymentUrl: session?.url || null,
+        },
+      },
     );
 
     res.status(201).json({
@@ -175,8 +201,14 @@ export const createOrder = async (req, res, next) => {
       message: "Order created successfully",
       orderId: orderDoc._id,
       orderNumber: orderDoc.orderNumber,
-      paymentUrl: session.url,
-      order: normalizeOrder(orderDoc),
+      clientSecret: paymentIntent?.clientSecret || null,
+      paymentIntentId: paymentIntent?.id || null,
+      paymentUrl: session?.url || null,
+      order: normalizeOrder({
+        ...orderDoc,
+        stripePaymentIntentId: paymentIntent?.id,
+        clientSecret: paymentIntent?.clientSecret,
+      }),
     });
   } catch (error) {
     console.error("Error in createOrder:", error);
@@ -185,28 +217,36 @@ export const createOrder = async (req, res, next) => {
 };
 
 /**
- * 2. Verify payment status upon return from Stripe
+ * 2. Verify payment status upon return from Stripe (Session or PaymentIntent)
  */
 export const verifyOrderPayment = async (req, res, next) => {
   try {
-    const { session_id, order_id, order_number } = req.query;
+    const { session_id, payment_intent_id, payment_intent, order_id, order_number } = req.query;
+    const piId = payment_intent_id || payment_intent;
 
-    if (!session_id) {
+    if (!session_id && !piId && !order_id && !order_number) {
       return res.status(400).json({
         success: false,
-        message: "Stripe session_id is required",
+        message: "Stripe session_id, payment_intent, or order_id is required",
       });
     }
 
-    const verification = await verifyStripePayment(session_id);
+    let verification = { paid: false };
+    if (piId) {
+      verification = await verifyStripePaymentIntent(piId);
+    } else if (session_id) {
+      verification = await verifyStripePayment(session_id);
+    }
 
     let query = {};
     if (order_id && ObjectId.isValid(order_id)) {
       query._id = new ObjectId(order_id);
     } else if (order_number) {
       query.orderNumber = order_number;
-    } else if (verification.orderId && ObjectId.isValid(verification.orderId)) {
+    } else if (verification?.orderId && ObjectId.isValid(verification.orderId)) {
       query._id = new ObjectId(verification.orderId);
+    } else if (piId) {
+      query.stripePaymentIntentId = piId;
     } else {
       query.stripeSessionId = session_id;
     }
@@ -220,16 +260,20 @@ export const verifyOrderPayment = async (req, res, next) => {
     }
 
     if (verification.paid) {
+      const updateFields = {
+        paymentStatus: "paid",
+        orderStatus: "processing",
+        paidAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      if (verification.paymentDetails) {
+        updateFields.paymentDetails = verification.paymentDetails;
+      }
+
       await orderCollection.updateOne(
         { _id: existingOrder._id },
-        {
-          $set: {
-            paymentStatus: "paid",
-            orderStatus: "processing",
-            paidAt: new Date(),
-            updatedAt: new Date(),
-          },
-        },
+        { $set: updateFields },
       );
     }
 
@@ -654,4 +698,380 @@ export const cancelMyOrder = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Helper to execute CJ fulfillment for a single order
+ */
+export const executeSingleCjFulfillment = async (id) => {
+  if (!id || !ObjectId.isValid(id)) {
+    return { success: false, message: "Valid Order ID is required" };
+  }
+
+  const order = await orderCollection.findOne({ _id: new ObjectId(id) });
+  if (!order) {
+    return { success: false, message: "Order not found" };
+  }
+
+  // Guard: Check if already fulfilled with CJ
+  if (order.cjOrder?.cjOrderId) {
+    return {
+      success: false,
+      skipped: true,
+      message: `This order is already fulfilled with CJ (CJ Order ID: ${order.cjOrder.cjOrderId})`,
+      cjOrder: order.cjOrder,
+      order: normalizeOrder(order),
+    };
+  }
+
+  const customer = order.customer || {};
+  const shippingAddress = (customer.address || "").trim();
+  const shippingCity = (customer.city || "").trim();
+  const shippingProvince = (customer.state || customer.city || "").trim();
+  const shippingZip = (customer.zip || "").trim();
+  const shippingCountryCode = (customer.country || "US").trim().toUpperCase();
+  const shippingCustomerName = (
+    customer.name ||
+    `${customer.firstName || ""} ${customer.lastName || ""}`.trim() ||
+    "Customer"
+  ).trim();
+  const rawPhone = (customer.phone || "1234567890").trim();
+  const shippingPhone = rawPhone.replace(/\D/g, "") || "1234567890";
+  const email = (customer.email || "support@pretypet.com").trim();
+
+  if (!shippingAddress || !shippingCity || !shippingZip || !shippingCustomerName) {
+    return {
+      success: false,
+      message: "Customer delivery address (name, street, city, zip) is incomplete for shipping fulfillment.",
+    };
+  }
+
+  // Resolve CJ Variant IDs (VID) for all items in the order
+  const cjProducts = [];
+  for (let i = 0; i < (order.products || []).length; i++) {
+    const item = order.products[i];
+    let resolvedVid = item.vid || item.cjVid;
+
+    // Look up product in database if VID is not directly on the item
+    if (item.productId) {
+      try {
+        const query = ObjectId.isValid(item.productId)
+          ? { _id: new ObjectId(item.productId) }
+          : { cjProductId: String(item.productId) };
+        const prod = await productCollection.findOne(query);
+        if (prod) {
+          if (Array.isArray(prod.variations) && prod.variations.length > 0) {
+            const matchedVar =
+              prod.variations.find(
+                (v) =>
+                  (resolvedVid && String(v.vid || v.cjVid) === String(resolvedVid)) ||
+                  (item.sku && String(v.sku || v.cjSku) === String(item.sku))
+              ) || prod.variations[0];
+
+            if (matchedVar?.cjVid || matchedVar?.vid) {
+              resolvedVid = matchedVar.cjVid || matchedVar.vid;
+            }
+          } else if (prod.cjProductId) {
+            resolvedVid = prod.cjVid || prod.variations?.[0]?.cjVid || resolvedVid;
+          }
+        }
+      } catch (dbErr) {
+        console.warn("Could not lookup product for CJ VID resolution:", dbErr.message);
+      }
+    }
+
+    if (resolvedVid) {
+      cjProducts.push({
+        vid: String(resolvedVid),
+        quantity: Math.max(1, parseInt(item.quantity) || 1),
+        storeLineItemId: String(item.productId || `line-${i + 1}`),
+        title: item.title || "Product",
+        sku: item.sku || "",
+      });
+    }
+  }
+
+  if (cjProducts.length === 0) {
+    return {
+      success: false,
+      message: "No dropshipped CJ items with valid Variant IDs (VID) were detected in this order.",
+    };
+  }
+
+  // Determine logistic carrier name
+  const logisticName =
+    order.shipping?.logisticName ||
+    order.shipping?.name ||
+    "CJPacket Ordinary";
+
+  const cjPayload = {
+    orderNumber: String(order.orderNumber),
+    shippingZip,
+    shippingCountryCode,
+    shippingCountry: customer.country || "United States",
+    shippingProvince: shippingProvince || shippingCity,
+    shippingCity,
+    shippingCustomerName,
+    shippingAddress,
+    shippingPhone,
+    email,
+    remark: `PretyPet Store Order #${order.orderNumber}`,
+    logisticName,
+    fromCountryCode: "CN",
+    payType: 3, // Create order only (admin will review/pay in CJ portal, or pay via balance)
+    products: cjProducts.map((p, idx) => ({
+      vid: p.vid,
+      quantity: p.quantity,
+      storeLineItemId: String(p.storeLineItemId || `line-${idx + 1}`),
+    })),
+  };
+
+  console.log("Submitting order to CJ Dropshipping:", cjPayload);
+  let cjResponse;
+  try {
+    cjResponse = await cjApi.post("/shopping/order/createOrderV3", cjPayload);
+    if (cjResponse.data.code !== 200 && !cjResponse.data.result) {
+      throw new Error(cjResponse.data.message || "createOrderV3 unsuccessful");
+    }
+  } catch (v3Err) {
+    console.warn("createOrderV3 returned error, trying createOrderV2:", v3Err.message);
+    cjResponse = await cjApi.post("/shopping/order/createOrderV2", cjPayload);
+  }
+
+  if (cjResponse.data.code !== 200 && !cjResponse.data.result) {
+    console.error("CJ Order Creation Error:", cjResponse.data);
+    return {
+      success: false,
+      message: cjResponse.data.message || "CJ Dropshipping rejected the order",
+      cjResponse: cjResponse.data,
+    };
+  }
+
+  const cjData = cjResponse.data.data;
+  const cjOrderId =
+    typeof cjData === "string"
+      ? cjData
+      : cjData?.cjOrderId || cjData?.orderId || cjData?.orderNumber || `CJ-${Date.now()}`;
+  const cjPayUrl = cjData?.cjPayUrl || null;
+
+  const cjOrderRecord = {
+    cjOrderId: String(cjOrderId),
+    status: "SUBMITTED",
+    fulfilledAt: new Date(),
+    logisticName,
+    products: cjProducts,
+    cjPayUrl,
+    rawResponse: cjData,
+  };
+
+  await orderCollection.updateOne(
+    { _id: new ObjectId(id) },
+    {
+      $set: {
+        cjOrder: cjOrderRecord,
+        orderStatus: order.orderStatus === "pending" ? "processing" : order.orderStatus,
+        status: order.status === "pending" ? "processing" : order.status,
+        updatedAt: new Date(),
+      },
+    }
+  );
+
+  const updatedOrder = await orderCollection.findOne({ _id: new ObjectId(id) });
+
+  return {
+    success: true,
+    message: `Order successfully sent to CJ Dropshipping! CJ Order ID: ${cjOrderId}`,
+    cjOrder: cjOrderRecord,
+    order: normalizeOrder(updatedOrder),
+  };
+};
+
+/**
+ * 10. Fulfill dropshipped items in an order via CJ Dropshipping API
+ */
+export const fulfillCjOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const result = await executeSingleCjFulfillment(id);
+
+    if (!result.success && !result.skipped) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error("Error in fulfillCjOrder:", error?.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: error?.response?.data?.message || error.message || "Internal server error during CJ fulfillment",
+    });
+  }
+};
+
+/**
+ * 10b. Bulk fulfill multiple orders via CJ Dropshipping API
+ */
+export const bulkFulfillCjOrders = async (req, res, next) => {
+  try {
+    const { orderIds } = req.body;
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "An array of orderIds is required for bulk fulfillment.",
+      });
+    }
+
+    const results = [];
+    for (const id of orderIds) {
+      try {
+        const orderDoc = await orderCollection.findOne({ _id: new ObjectId(id) });
+        const orderNumber = orderDoc?.orderNumber || `PP-${String(id).slice(-6)}`;
+
+        if (!orderDoc) {
+          results.push({
+            orderId: id,
+            orderNumber,
+            success: false,
+            skipped: false,
+            message: "Order not found",
+          });
+          continue;
+        }
+
+        if (orderDoc.cjOrder?.cjOrderId) {
+          results.push({
+            orderId: id,
+            orderNumber,
+            success: true,
+            skipped: true,
+            message: `Already fulfilled with CJ (CJ ID: ${orderDoc.cjOrder.cjOrderId})`,
+            cjOrderId: orderDoc.cjOrder.cjOrderId,
+          });
+          continue;
+        }
+
+        const fulfillmentResult = await executeSingleCjFulfillment(id);
+        results.push({
+          orderId: id,
+          orderNumber,
+          success: fulfillmentResult.success,
+          skipped: Boolean(fulfillmentResult.skipped),
+          message: fulfillmentResult.message,
+          cjOrderId: fulfillmentResult.cjOrder?.cjOrderId || null,
+        });
+      } catch (err) {
+        results.push({
+          orderId: id,
+          orderNumber: `PP-${String(id).slice(-6)}`,
+          success: false,
+          skipped: false,
+          message: err.message || "Fulfillment failed",
+        });
+      }
+
+      // Small pacing delay to respect CJ API limits
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    const fulfilledCount = results.filter((r) => r.success && !r.skipped).length;
+    const skippedCount = results.filter((r) => r.skipped).length;
+    const failedCount = results.filter((r) => !r.success && !r.skipped).length;
+
+    res.json({
+      success: true,
+      total: orderIds.length,
+      fulfilledCount,
+      skippedCount,
+      failedCount,
+      results,
+      message: `Bulk fulfillment processed: ${fulfilledCount} fulfilled, ${skippedCount} skipped, ${failedCount} failed.`,
+    });
+  } catch (error) {
+    console.error("Error in bulkFulfillCjOrders:", error);
+    next(error);
+  }
+};
+
+/**
+ * 11. Sync CJ order status & fetch tracking number
+ */
+export const syncCjOrderStatus = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!id || !ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Valid Order ID is required" });
+    }
+
+    const order = await orderCollection.findOne({ _id: new ObjectId(id) });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const cjOrderId = order.cjOrder?.cjOrderId;
+    if (!cjOrderId) {
+      return res.status(400).json({
+        success: false,
+        message: "This order has not been fulfilled with CJ yet. Click 'Fulfill Order with CJ' first.",
+      });
+    }
+
+    // Query CJ for order details
+    const cjResponse = await cjApi.get("/shopping/order/getOrderDetail", {
+      params: { orderId: cjOrderId },
+    });
+
+    if (cjResponse.data.code !== 200) {
+      return res.status(400).json({
+        success: false,
+        message: cjResponse.data.message || "Could not query CJ order details",
+      });
+    }
+
+    const orderData = cjResponse.data.data || {};
+    const trackingNumber =
+      orderData.trackNumber ||
+      orderData.trackingNumber ||
+      orderData.logisticTrackNumber ||
+      orderData.shippingTrackNumber ||
+      null;
+
+    const cjStatus = orderData.orderStatus || orderData.status || order.cjOrder?.status || "PROCESSING";
+
+    const updateFields = {
+      "cjOrder.status": cjStatus,
+      "cjOrder.lastCheckedAt": new Date(),
+      updatedAt: new Date(),
+    };
+
+    if (trackingNumber) {
+      updateFields["cjOrder.trackingNumber"] = trackingNumber;
+      updateFields["shipping.trackingNumber"] = trackingNumber;
+      if (order.orderStatus !== "delivered") {
+        updateFields.orderStatus = "shipped";
+        updateFields.status = "shipped";
+        updateFields.shippedAt = order.shippedAt || new Date();
+      }
+    }
+
+    await orderCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+
+    const updatedOrder = await orderCollection.findOne({ _id: new ObjectId(id) });
+
+    res.json({
+      success: true,
+      trackingNumber,
+      cjStatus,
+      message: trackingNumber
+        ? `Tracking number synced successfully: ${trackingNumber}`
+        : `CJ status is: ${cjStatus}. Parcel is not yet dispatched with tracking.`,
+      order: normalizeOrder(updatedOrder),
+    });
+  } catch (error) {
+    console.error("Error in syncCjOrderStatus:", error?.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: error?.response?.data?.message || error.message || "Internal server error syncing CJ status",
+    });
+  }
+};
+
 

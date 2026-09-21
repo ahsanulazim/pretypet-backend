@@ -1,5 +1,9 @@
+import { ObjectId } from "mongodb";
 import admin from "../admin/firebase.config.js";
-import { userCollection } from "../collections/collections.js";
+import {
+  productCollection,
+  userCollection,
+} from "../collections/collections.js";
 
 export const createUser = async (req, res) => {
   const { name, email } = req.body;
@@ -124,8 +128,7 @@ export const deleteUser = async (req, res) => {
     }
   } catch (error) {
     console.error("Delete error:", error);
-    return res
-      .status(500)
+    return res.status(500);
   }
 };
 
@@ -133,7 +136,9 @@ export const deleteUser = async (req, res) => {
 export const updateUserProfile = async (req, res) => {
   const { email, name, phone, avatar } = req.body;
   if (!email) {
-    return res.status(400).json({ success: false, message: "Email is required" });
+    return res
+      .status(400)
+      .json({ success: false, message: "Email is required" });
   }
 
   try {
@@ -145,11 +150,13 @@ export const updateUserProfile = async (req, res) => {
     const result = await userCollection.findOneAndUpdate(
       { email },
       { $set: updateFields },
-      { returnDocument: "after" }
+      { returnDocument: "after" },
     );
 
     if (!result) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     res.status(200).json({
@@ -159,15 +166,20 @@ export const updateUserProfile = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating profile:", error);
-    res.status(500).json({ success: false, message: "Failed to update profile" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to update profile" });
   }
 };
 
 // Pet Management (Add, Update, Delete)
 export const addPet = async (req, res) => {
-  const { email, name, type, breed, birthDate, weight, allergies, notes } = req.body;
+  const { email, name, type, breed, birthDate, weight, allergies, notes } =
+    req.body;
   if (!email || !name) {
-    return res.status(400).json({ success: false, message: "Email and pet name are required" });
+    return res
+      .status(400)
+      .json({ success: false, message: "Email and pet name are required" });
   }
 
   const newPet = {
@@ -186,11 +198,13 @@ export const addPet = async (req, res) => {
     const result = await userCollection.findOneAndUpdate(
       { email },
       { $push: { pets: newPet }, $set: { updatedAt: new Date() } },
-      { returnDocument: "after" }
+      { returnDocument: "after" },
     );
 
     if (!result) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     res.status(201).json({
@@ -207,18 +221,22 @@ export const addPet = async (req, res) => {
 export const deletePet = async (req, res) => {
   const { email, petId } = req.query;
   if (!email || !petId) {
-    return res.status(400).json({ success: false, message: "Email and petId are required" });
+    return res
+      .status(400)
+      .json({ success: false, message: "Email and petId are required" });
   }
 
   try {
     const result = await userCollection.findOneAndUpdate(
       { email },
       { $pull: { pets: { id: petId } }, $set: { updatedAt: new Date() } },
-      { returnDocument: "after" }
+      { returnDocument: "after" },
     );
 
     if (!result) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     res.status(200).json({
@@ -234,9 +252,22 @@ export const deletePet = async (req, res) => {
 
 // Address Management (Add, Delete, Set Default)
 export const addAddress = async (req, res) => {
-  const { email, label, fullName, phone, street, city, state, zip, country, isDefault } = req.body;
+  const {
+    email,
+    label,
+    fullName,
+    phone,
+    street,
+    city,
+    state,
+    zip,
+    country,
+    isDefault,
+  } = req.body;
   if (!email || !fullName || !street || !city) {
-    return res.status(400).json({ success: false, message: "Required address fields are missing" });
+    return res
+      .status(400)
+      .json({ success: false, message: "Required address fields are missing" });
   }
 
   const addressId = `addr_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
@@ -257,13 +288,18 @@ export const addAddress = async (req, res) => {
   try {
     const user = await userCollection.findOne({ email });
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     let existingAddresses = user.addresses || [];
     // If setting as default or if first address, make it default
     if (newAddress.isDefault || existingAddresses.length === 0) {
-      existingAddresses = existingAddresses.map((a) => ({ ...a, isDefault: false }));
+      existingAddresses = existingAddresses.map((a) => ({
+        ...a,
+        isDefault: false,
+      }));
       newAddress.isDefault = true;
     }
 
@@ -271,7 +307,7 @@ export const addAddress = async (req, res) => {
 
     await userCollection.updateOne(
       { email },
-      { $set: { addresses: updatedAddresses, updatedAt: new Date() } }
+      { $set: { addresses: updatedAddresses, updatedAt: new Date() } },
     );
 
     res.status(201).json({
@@ -288,18 +324,25 @@ export const addAddress = async (req, res) => {
 export const deleteAddress = async (req, res) => {
   const { email, addressId } = req.query;
   if (!email || !addressId) {
-    return res.status(400).json({ success: false, message: "Email and addressId are required" });
+    return res
+      .status(400)
+      .json({ success: false, message: "Email and addressId are required" });
   }
 
   try {
     const result = await userCollection.findOneAndUpdate(
       { email },
-      { $pull: { addresses: { id: addressId } }, $set: { updatedAt: new Date() } },
-      { returnDocument: "after" }
+      {
+        $pull: { addresses: { id: addressId } },
+        $set: { updatedAt: new Date() },
+      },
+      { returnDocument: "after" },
     );
 
     if (!result) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     res.status(200).json({
@@ -309,20 +352,26 @@ export const deleteAddress = async (req, res) => {
     });
   } catch (error) {
     console.error("Error deleting address:", error);
-    res.status(500).json({ success: false, message: "Failed to delete address" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to delete address" });
   }
 };
 
 export const setDefaultAddress = async (req, res) => {
   const { email, addressId } = req.body;
   if (!email || !addressId) {
-    return res.status(400).json({ success: false, message: "Email and addressId are required" });
+    return res
+      .status(400)
+      .json({ success: false, message: "Email and addressId are required" });
   }
 
   try {
     const user = await userCollection.findOne({ email });
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const updatedAddresses = (user.addresses || []).map((addr) => ({
@@ -332,7 +381,7 @@ export const setDefaultAddress = async (req, res) => {
 
     await userCollection.updateOne(
       { email },
-      { $set: { addresses: updatedAddresses, updatedAt: new Date() } }
+      { $set: { addresses: updatedAddresses, updatedAt: new Date() } },
     );
 
     res.status(200).json({
@@ -342,7 +391,9 @@ export const setDefaultAddress = async (req, res) => {
     });
   } catch (error) {
     console.error("Error setting default address:", error);
-    res.status(500).json({ success: false, message: "Failed to set default address" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to set default address" });
   }
 };
 
@@ -350,23 +401,31 @@ export const setDefaultAddress = async (req, res) => {
 export const toggleWishlist = async (req, res) => {
   const { email, productId } = req.body;
   if (!email || !productId) {
-    return res.status(400).json({ success: false, message: "Email and productId are required" });
+    return res
+      .status(400)
+      .json({ success: false, message: "Email and productId are required" });
   }
 
   try {
     const user = await userCollection.findOne({ email });
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
-    const currentWishlist = user.wishlist || [];
-    const exists = currentWishlist.includes(productId);
+    const strProductId = String(productId);
+    const currentWishlist = (user.wishlist || []).map(String);
+    const exists = currentWishlist.includes(strProductId);
 
     const updateQuery = exists
-      ? { $pull: { wishlist: productId } }
-      : { $addToSet: { wishlist: productId } };
+      ? { $pull: { wishlist: strProductId } }
+      : { $addToSet: { wishlist: strProductId } };
 
-    await userCollection.updateOne({ email }, { ...updateQuery, $set: { updatedAt: new Date() } });
+    await userCollection.updateOne(
+      { email },
+      { ...updateQuery, $set: { updatedAt: new Date() } },
+    );
 
     const updatedUser = await userCollection.findOne({ email });
     res.status(200).json({
@@ -377,6 +436,58 @@ export const toggleWishlist = async (req, res) => {
     });
   } catch (error) {
     console.error("Error toggling wishlist:", error);
-    res.status(500).json({ success: false, message: "Failed to update wishlist" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to update wishlist" });
+  }
+};
+
+export const getWishlistProducts = async (req, res) => {
+  const { email } = req.query;
+  if (!email) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Email is required" });
+  }
+
+  try {
+    const user = await userCollection.findOne({ email });
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const wishlistIds = (user.wishlist || []).filter(Boolean).map(String);
+    if (wishlistIds.length === 0) {
+      return res.status(200).json({ success: true, products: [], count: 0 });
+    }
+
+    const objectIds = wishlistIds
+      .filter((id) => ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
+
+    const orConditions = [{ slug: { $in: wishlistIds } }];
+    if (objectIds.length > 0) {
+      orConditions.push({ _id: { $in: objectIds } });
+    }
+
+    const products = await productCollection
+      .find({
+        $or: orConditions,
+        isDeleted: { $ne: true },
+      })
+      .toArray();
+
+    res.status(200).json({
+      success: true,
+      products,
+      count: products.length,
+    });
+  } catch (error) {
+    console.error("Error fetching wishlist products:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch wishlist products" });
   }
 };

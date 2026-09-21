@@ -333,12 +333,10 @@ export const importProductToStore = async (req, res, next) => {
       slug = `${baseSlug}-${count}`;
     }
 
-    // Format active variants
-    const activeVariants = Array.isArray(variants)
-      ? variants.filter((v) => v.isActive !== false)
-      : [];
-
-    const hasVariations = activeVariants.length > 0;
+    // Format variants preserving isActive state
+    const inputVariants = Array.isArray(variants) ? variants : [];
+    const hasVariations = inputVariants.length > 0;
+    const activeVariants = inputVariants.filter((v) => v.isActive !== false);
 
     // Dictionaries for auto-detecting attribute names
     const SIZES = new Set([
@@ -360,7 +358,7 @@ export const importProductToStore = async (req, res, next) => {
           partIndex: i,
         }));
       } else {
-        const keys = activeVariants
+        const keys = (activeVariants.length > 0 ? activeVariants : inputVariants)
           .map((v) => (v.variantKey || "").trim())
           .filter(Boolean);
         const splitKeys = keys.map((k) => k.split("-").map((s) => s.trim()));
@@ -401,22 +399,23 @@ export const importProductToStore = async (req, res, next) => {
       }
     }
 
-    // Structure variant documents for database
-    const mappedVariations = activeVariants.map((v, idx) => {
+    // Structure variant documents for database (preserving all variants & their isActive state)
+    const mappedVariations = inputVariants.map((v, idx) => {
       const vObj = {
         vid: v.vid || v.cjVid || `vid-${idx}`,
         cjVid: v.cjVid || v.vid || "",
-        cjSku: v.variantSku || "",
+        cjSku: v.variantSku || v.cjSku || "",
         variantKey: v.variantKey || "",
         price: parseFloat(v.price) || parseFloat(basePrice) || 0,
         costPrice: parseFloat(v.costPrice) || 0,
         stock: parseInt(v.stock) || 100,
         weight: parseFloat(v.weight) || 0,
+        isActive: v.isActive !== false,
         thumbnail:
           typeof v.variantImage === "string"
             ? { url: v.variantImage }
             : v.thumbnail || null,
-        images: v.variantImage ? [{ url: v.variantImage }] : [],
+        images: v.variantImage ? [{ url: v.variantImage }] : v.images || [],
       };
 
       if (dynamicAttributes.length > 1 && v.variantKey && v.variantKey.includes("-")) {
@@ -431,13 +430,15 @@ export const importProductToStore = async (req, res, next) => {
       return vObj;
     });
 
-    // Calculate overall price and stock
+    const activeMapped = mappedVariations.filter((v) => v.isActive);
+
+    // Calculate overall price and stock from active variants
     const computedPrice = hasVariations
-      ? mappedVariations[0]?.price || parseFloat(basePrice) || 0
+      ? activeMapped[0]?.price || mappedVariations[0]?.price || parseFloat(basePrice) || 0
       : parseFloat(basePrice) || 0;
 
     const computedStock = hasVariations
-      ? mappedVariations.reduce((sum, v) => sum + (v.stock || 0), 0)
+      ? activeMapped.reduce((sum, v) => sum + (v.stock || 0), 0)
       : parseInt(baseStock) || 100;
 
     // Format gallery images
@@ -467,7 +468,7 @@ export const importProductToStore = async (req, res, next) => {
       cjProductSku: cjProductSku || "",
       costPrice:
         parseFloat(costPrice) ||
-        (hasVariations ? mappedVariations[0]?.costPrice : 0),
+        (hasVariations ? activeMapped[0]?.costPrice || mappedVariations[0]?.costPrice || 0 : 0),
 
       // Pricing & Inventory
       price: computedPrice,
@@ -569,11 +570,13 @@ export const syncCjProduct = async (req, res, next) => {
     }
 
     // Map updated variant stocks and costs
-    let updatedVariations = product.variations || [];
-    if (product.hasVariations && updatedVariations.length > 0) {
+    let updatedVariations = Array.isArray(product.variations) ? [...product.variations] : [];
+
+    if (cjVariants.length > 0) {
+      // 1. Update existing variations with latest CJ stock and cost
       updatedVariations = updatedVariations.map((v) => {
         const matchingCjVar = cjVariants.find(
-          (cv) => String(cv.vid) === String(v.cjVid),
+          (cv) => String(cv.vid) === String(v.cjVid || v.vid),
         );
         if (matchingCjVar) {
           const varStock = parseInt(
@@ -591,13 +594,47 @@ export const syncCjProduct = async (req, res, next) => {
         }
         return v;
       });
+
+      // 2. Identify and restore any CJ variants that were previously dropped/missing
+      const existingVids = new Set(
+        updatedVariations.map((v) => String(v.cjVid || v.vid))
+      );
+      const missingCjVars = cjVariants.filter(
+        (cv) => !existingVids.has(String(cv.vid))
+      );
+
+      if (missingCjVars.length > 0) {
+        const restoredVars = missingCjVars.map((cv, idx) => ({
+          vid: cv.vid || `vid-restored-${idx}`,
+          cjVid: cv.vid || "",
+          cjSku: cv.variantSku || "",
+          variantKey: cv.variantKey || `Variant ${updatedVariations.length + idx + 1}`,
+          price: parseFloat(cv.variantSellPrice)
+            ? Number((parseFloat(cv.variantSellPrice) * 2).toFixed(2))
+            : product.basePrice || product.price || 0,
+          costPrice: parseFloat(cv.variantSellPrice) || 0,
+          stock: parseInt(cv.inventoryNum || cv.storageNum) || 0,
+          weight: parseFloat(cv.variantWeight) || product.weight || 0,
+          thumbnail: cv.variantImage ? { url: cv.variantImage } : null,
+          images: cv.variantImage ? [{ url: cv.variantImage }] : [],
+          isActive: false, // Default to inactive so store owner can review and enable
+        }));
+        updatedVariations = [...updatedVariations, ...restoredVars];
+      }
     }
+
+    const hasVars = updatedVariations.length > 0;
+    const activeVars = updatedVariations.filter((v) => v.isActive !== false);
 
     await productCollection.updateOne(
       { _id: new ObjectId(id) },
       {
         $set: {
+          hasVariations: hasVars,
           variations: updatedVariations,
+          stock: activeVars.length > 0
+            ? activeVars.reduce((sum, v) => sum + (v.stock || 0), 0)
+            : product.stock || 0,
           updatedAt: new Date(),
           lastCjSyncAt: new Date(),
         },
@@ -952,4 +989,33 @@ export const calculateCjShipping = async (req, res, next) => {
     });
   }
 };
+
+/**
+ * 7. On-demand full sync of all dropshipped products
+ */
+export const syncAllCjProducts = async (req, res, next) => {
+  try {
+    const { runFullCjInventorySync } = await import("../services/cjSyncService.js");
+    const result = await runFullCjInventorySync();
+    res.json(result);
+  } catch (error) {
+    console.error("Error in syncAllCjProducts:", error);
+    next(error);
+  }
+};
+
+/**
+ * 8. Get current status of CJ inventory sync
+ */
+export const getSyncStatus = async (req, res, next) => {
+  try {
+    const { getCjSyncStatus } = await import("../services/cjSyncService.js");
+    const status = getCjSyncStatus();
+    res.json({ success: true, status });
+  } catch (error) {
+    console.error("Error in getSyncStatus:", error);
+    next(error);
+  }
+};
+
 

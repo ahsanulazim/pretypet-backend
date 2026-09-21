@@ -85,7 +85,11 @@ export const addProductToStore = async (req, res, next) => {
     //   createdAt: new Date(),
     // });
 
-    res.json({ success: true, product });
+    res.json({
+      success: true,
+      message: "Product added to CJ Import List successfully",
+      product,
+    });
   } catch (error) {
     next(error);
   }
@@ -216,18 +220,82 @@ export const getListedProducts = async (req, res) => {
 
 export const getAllProducts = async (req, res) => {
   const page = Math.max(parseInt(req.query.page) || 1, 1);
-  const limit = Math.min(parseInt(req.query.limit) || 10, 50); // নিরাপদ cap
+  const limit = Math.min(parseInt(req.query.limit) || 12, 50); // safe limit
   const searchTerm = req.query.search?.trim() || "";
+  const { minPrice, maxPrice, brand, category, inStock, onSale, sort } = req.query;
 
   try {
-    const matchStage = {};
+    const matchStage = {
+      isDeleted: { $ne: true },
+    };
+
     if (searchTerm) {
-      matchStage.title = { $regex: searchTerm, $options: "i" };
+      matchStage.$or = [
+        { title: { $regex: searchTerm, $options: "i" } },
+        { category: { $regex: searchTerm, $options: "i" } },
+        { brand: { $regex: searchTerm, $options: "i" } },
+        { tags: { $in: [new RegExp(searchTerm, "i")] } },
+      ];
     }
+
+    if (category && category.trim() !== "" && category !== "all") {
+      matchStage.category = category.trim();
+    }
+
+    if (brand && brand.trim() !== "" && brand !== "all") {
+      matchStage.brand = brand.trim();
+    }
+
+    // Price filter (handles both single products and variable products)
+    if (
+      (minPrice && minPrice.trim() !== "") ||
+      (maxPrice && maxPrice.trim() !== "")
+    ) {
+      const priceFilter = {};
+      if (minPrice && minPrice.trim() !== "")
+        priceFilter.$gte = Number(minPrice);
+      if (maxPrice && maxPrice.trim() !== "")
+        priceFilter.$lte = Number(maxPrice);
+
+      matchStage.$and = matchStage.$and || [];
+      matchStage.$and.push({
+        $or: [{ basePrice: priceFilter }, { "variations.price": priceFilter }],
+      });
+    }
+
+    // inStock filter - only apply if explicitly true
+    if (inStock === "true" || inStock === true) {
+      matchStage.$and = matchStage.$and || [];
+      matchStage.$and.push({
+        $or: [{ baseStock: { $gt: 0 } }, { "variations.stock": { $gt: 0 } }],
+      });
+    }
+
+    // onSale filter - only apply if explicitly true
+    if (onSale === "true" || onSale === true) {
+      matchStage.$and = matchStage.$and || [];
+      matchStage.$and.push({
+        $or: [
+          { baseDiscount: { $gt: 0 } },
+          { "variations.discount": { $gt: 0 } },
+        ],
+      });
+    }
+
+    const sortOptions = {
+      newest: { createdAt: -1 },
+      oldest: { createdAt: 1 },
+      price_asc: { basePrice: 1 },
+      price_desc: { basePrice: -1 },
+      name_asc: { title: 1 },
+      name_desc: { title: -1 },
+    };
+
+    const sortStage = sortOptions[sort] || sortOptions.newest;
 
     const pipeline = [
       { $match: matchStage },
-      { $sort: { createdAt: -1 } },
+      { $sort: sortStage },
       { $skip: (page - 1) * limit },
       { $limit: limit },
       {
@@ -235,21 +303,41 @@ export const getAllProducts = async (req, res) => {
           from: "categories",
           localField: "category",
           foreignField: "slug",
-          as: "category",
+          as: "categoryDetails",
         },
       },
       {
         $addFields: {
-          category: { $arrayElemAt: ["$category.name", 0] },
+          categorySlug: {
+            $ifNull: [
+              { $arrayElemAt: ["$categoryDetails.slug", 0] },
+              "$category",
+            ],
+          },
+          category: {
+            $ifNull: [
+              { $arrayElemAt: ["$categoryDetails.name", 0] },
+              "$category",
+            ],
+          },
         },
       },
       {
         $project: {
           _id: 1,
           title: 1,
+          slug: 1,
           thumbnail: 1,
+          images: 1,
           category: 1,
+          categorySlug: 1,
+          brand: 1,
+          basePrice: 1,
+          baseStock: 1,
+          baseDiscount: 1,
           hasVariations: 1,
+          variations: 1,
+          tags: 1,
           isDropshipped: 1,
           supplier: 1,
           cjProductId: 1,

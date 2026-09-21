@@ -12,6 +12,7 @@ import {
   deleteAddress,
   setDefaultAddress,
   toggleWishlist,
+  getWishlistProducts,
 } from "../controller/user.controller.js";
 
 const router = express.Router();
@@ -30,5 +31,6 @@ router.post("/addAddress", addAddress);
 router.delete("/deleteAddress", deleteAddress);
 router.patch("/setDefaultAddress", setDefaultAddress);
 router.post("/toggleWishlist", toggleWishlist);
+router.get("/wishlist-products", getWishlistProducts);
 
 export default router;

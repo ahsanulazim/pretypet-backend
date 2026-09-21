@@ -16,9 +16,13 @@ import orderRouter from "./router/order.router.js";
 import reviewRouter from "./router/review.router.js";
 import couponRouter from "./router/coupon.router.js";
 import { cjErrorHandler } from "./middleware/cjErrorHandler.js";
+import { initCjCronJobs } from "./services/cjCronService.js";
 
 const app = express();
 const PORT = process.env.PORT;
+
+// Trust proxy for reverse proxy environments (Nginx, cPanel, Cloudflare, etc.)
+app.set("trust proxy", 1);
 
 app.use(
   cors({
@@ -38,6 +42,8 @@ app.get("/", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  // Start background cron jobs for CJ Dropshipping
+  initCjCronJobs();
 });
 
 //multer upload limiter

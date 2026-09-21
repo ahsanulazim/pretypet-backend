@@ -10,4 +10,5 @@ export const cjRateLimiter = rateLimit({
   },
   standardHeaders: true, // RateLimit-* headers
   legacyHeaders: false, // Disable X-RateLimit-* headers
+  validate: { xForwardedForHeader: false },
 });

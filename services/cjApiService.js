@@ -29,6 +29,7 @@ cjApi.interceptors.request.use(async (config) => {
   }
 
   config.headers["CJ-Access-Token"] = accessToken;
+  config.headers["platformToken"] = accessToken;
   return config;
 });
 
