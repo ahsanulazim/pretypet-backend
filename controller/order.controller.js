@@ -602,6 +602,52 @@ export const deleteOrder = async (req, res, next) => {
 };
 
 /**
+ * 7b. Bulk Delete Orders
+ */
+export const bulkDeleteOrders = async (req, res, next) => {
+  try {
+    const rawIds =
+      req.body?.orderIds || req.body?.ids || req.query?.orderIds || req.query?.ids;
+    let ids = rawIds;
+    if (typeof rawIds === "string") {
+      ids = rawIds.split(",").map((s) => s.trim());
+    }
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Array of order IDs is required",
+      });
+    }
+
+    const validObjectIds = ids
+      .filter((id) => id && ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
+
+    if (validObjectIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid order IDs provided",
+      });
+    }
+
+    const result = await orderCollection.deleteMany({
+      _id: { $in: validObjectIds },
+    });
+
+    res.json({
+      success: true,
+      deletedCount: result.deletedCount,
+      message: `${result.deletedCount} order(s) deleted successfully`,
+    });
+  } catch (error) {
+    console.error("Error in bulkDeleteOrders:", error);
+    next(error);
+  }
+};
+
+
+/**
  * 8. Customer: Get orders belonging to customer
  */
 export const getMyOrders = async (req, res, next) => {

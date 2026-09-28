@@ -7,6 +7,7 @@ import {
   updateOrderStatus,
   getOrderStats,
   deleteOrder,
+  bulkDeleteOrders,
   getMyOrders,
   cancelMyOrder,
   fulfillCjOrder,
@@ -24,6 +25,7 @@ router.get("/getOrderDetails", getOrderDetails);
 router.patch("/updateOrderStatus", updateOrderStatus);
 router.get("/getOrderStats", getOrderStats);
 router.delete("/deleteOrder", deleteOrder);
+router.delete("/bulk-delete", bulkDeleteOrders);
 
 // CJ Dropshipping fulfillment & tracking sync
 router.post("/bulk-fulfill-cj", cjRateLimiter, bulkFulfillCjOrders);
